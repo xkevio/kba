@@ -43,8 +43,8 @@ bitfield! {
 impl Arm7TDMI {
     /// If I is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.
-    pub fn barrel_shifter(&self, op: u16, imm: bool) -> u32 {
-        if imm {
+    pub fn barrel_shifter<const I: bool>(&self, op: u16) -> u32 {
+        if I {
             ((op & 0xFF) as u32).rotate_right((op as u32 & 0x0F00) * 2)
         } else {
             let rm = self.regs[op as usize & 0xF];
@@ -77,7 +77,7 @@ impl Arm7TDMI {
     pub fn data_processing<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
         let rn = self.regs[opcode as usize & 0x000F_0000];
         let rd = self.regs[opcode as usize & 0xF000];
-        let op2 = self.barrel_shifter(opcode as u16, I);
+        let op2 = self.barrel_shifter::<I>(opcode as u16);
 
         // TODO: carry out from barrel shifter
         if self.cond::<COND>() {
