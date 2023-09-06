@@ -10,12 +10,11 @@ pub enum State {
     Thumb,
 }
 
-impl From<u8> for State {
-    fn from(value: u8) -> Self {
-        if value == 0 {
-            Self::Arm
-        } else {
-            Self::Thumb
+impl From<bool> for State {
+    fn from(value: bool) -> Self {
+        match value {
+            false => Self::Arm,
+            true => Self::Thumb,
         }
     }
 }
@@ -27,7 +26,7 @@ bitfield! {
         /// Mode bits (fiq, irq, svc, user...)
         pub mode: u8 @ 0..=4,
         /// ARM (0) or THUMB (1)
-        pub state: u8 [get State] @ 5; 1,
+        pub state: bool [get State] @ 5,
         pub fiq: bool @ 6,
         pub irq: bool @ 7,
         /// Overflow flag

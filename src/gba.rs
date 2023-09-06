@@ -1,4 +1,4 @@
-use crate::{mmu::bus::Bus, arm::interpreter::arm7tdmi::Arm7TDMI};
+use crate::{arm::interpreter::arm7tdmi::Arm7TDMI, mmu::bus::Bus};
 
 pub const LCD_WIDTH: usize = 240;
 pub const LCD_HEIGHT: usize = 160;
