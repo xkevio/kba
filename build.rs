@@ -9,7 +9,7 @@ fn main() {
 
     // Bits 20-27 and 4-7 are used to index the opcode (2^12 = 4096).
     for _ in 0..4096 {
-        instrs += &format!("{}", 0xFFFF_FFFFu32 & 0x0FF0_00F0);
+        instrs += &format!("{},\n", 0xFFFF_FFFFu32 & 0x0FF0_00F0);
     }
 
     std::fs::write(&dest_path, prelude.to_string() + &instrs + "\n];").unwrap();
