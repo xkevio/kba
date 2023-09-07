@@ -13,6 +13,6 @@ fn main() {
         // instrs += &format!("{},\n", ...);
     }
 
-    std::fs::write(&dest_path, prelude.to_string() + &instrs + "\n];").unwrap();
+    std::fs::write(dest_path, prelude.to_string() + &instrs + "\n];").unwrap();
     println!("cargo:rerun-if-changed=build.rs");
 }
