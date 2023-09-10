@@ -47,13 +47,28 @@ bitfield! {
 impl Arm7TDMI {
     /// If I is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.
-    pub fn barrel_shifter<const I: bool>(&self, op: u16) -> u32 {
+    pub fn barrel_shifter<const I: bool>(&self, op: u16) -> (u32, bool) {
         if I {
-            ((op & 0xFF) as u32).rotate_right((op as u32 & 0x0F00) * 2)
+            (
+                ((op & 0xFF) as u32).rotate_right((op as u32 & 0x0F00) * 2),
+                false,
+            )
         } else {
             let rm = self.regs[op as usize & 0xF];
-            let shift = op & 0x0FF0;
-            todo!()
+            let shift_type = (op & 0x0060) >> 5;
+            let amount = if op & (1 << 3) != 0 {
+                self.regs[(op as usize & 0x0F00) >> 8]
+            } else {
+                (op as u32 & 0x0F80) >> 7
+            };
+
+            match shift_type {
+                0b00 => self.lsl(rm, amount),
+                0b01 => self.lsr(rm, amount),
+                0b10 => self.asr(rm, amount),
+                0b11 => self.ror(rm, amount),
+                _ => unreachable!(),
+            }
         }
     }
 
@@ -81,7 +96,7 @@ impl Arm7TDMI {
     pub fn data_processing<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
         let rd = (opcode as usize & 0xF000) >> 12;
         let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
-        let op2 = self.barrel_shifter::<I>(opcode as u16);
+        let (op2, carry_out) = self.barrel_shifter::<I>(opcode as u16);
 
         // Bits 21-24 specify the actual opcode.
         let operation = (opcode & 0x01E0_0000) >> 21;
@@ -126,6 +141,7 @@ impl Arm7TDMI {
                     0b0000 | 0b0001 | 0b1000 | 0b1001 | 0b1100 | 0b1101 | 0b1110 | 0b1111
                 ) {
                     // TODO: set c to carry out of barrel shifter.
+                    self.cpsr.set_c(carry_out);
                     // Arithmetic operations.
                 } else {
                     // TODO: set c to carry out of bit31 in ALU.
@@ -136,5 +152,37 @@ impl Arm7TDMI {
                 self.regs[rd] = result;
             }
         }
+    }
+
+    /// Logical shift left, returns result and carry out.
+    #[inline(always)]
+    fn lsl(&self, rm: u32, amount: u32) -> (u32, bool) {
+        (rm << amount, rm & (32 - amount) != 0)
+    }
+
+    /// Logical shift right, returns result and carry out.
+    #[inline(always)]
+    fn lsr(&self, rm: u32, amount: u32) -> (u32, bool) {
+        (rm >> amount, rm & amount != 0)
+    }
+
+    /// Arithmetic shift right, returns result and carry out.
+    #[inline(always)]
+    fn asr(&self, rm: u32, amount: u32) -> (u32, bool) {
+        let bit31 = rm & (1 << 31);
+        let carry = rm & amount != 0;
+
+        let mut rm = rm >> amount;
+        for i in 0..amount {
+            rm |= bit31 >> i;
+        }
+
+        (rm, carry)
+    }
+
+    /// Rotate right, returns result and carry out.
+    #[inline(always)]
+    fn ror(&self, rm: u32, amount: u32) -> (u32, bool) {
+        (rm.rotate_right(amount), rm & amount != 0)
     }
 }
