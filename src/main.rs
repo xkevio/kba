@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use gba::{LCD_HEIGHT, LCD_WIDTH};
 use sdl2::event::Event;
 

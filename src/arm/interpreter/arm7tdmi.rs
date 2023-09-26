@@ -1,6 +1,6 @@
 use proc_bitfield::bitfield;
 
-use crate::ov;
+use crate::{mmu::bus::Bus, mmu::Mcu, ov};
 
 pub struct Arm7TDMI {
     pub regs: [u32; 16],
@@ -21,6 +21,15 @@ impl From<bool> for State {
     }
 }
 
+impl From<State> for bool {
+    fn from(value: State) -> Self {
+        match value {
+            State::Arm => false,
+            State::Thumb => true,
+        }
+    }
+}
+
 bitfield! {
     /// **CPSR**: Current Program Status Register.
     ///
@@ -30,7 +39,7 @@ bitfield! {
         /// Mode bits (fiq, irq, svc, user...)
         pub mode: u8 @ 0..=4,
         /// ARM (0) or THUMB (1)
-        pub state: bool [get State] @ 5,
+        pub state: bool [State] @ 5,
         pub fiq: bool @ 6,
         pub irq: bool @ 7,
         /// Overflow flag
@@ -151,6 +160,121 @@ impl Arm7TDMI {
             if !is_intmd {
                 self.regs[rd] = result;
             }
+        }
+    }
+
+    /// MUL and MLA. (check for r15 and rd != rm?)
+    pub fn multiply<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+        let acc = (opcode & (1 << 21)) != 0;
+
+        let rd = (opcode as usize & 0x000F_0000) >> 16;
+        let rm = self.regs[opcode as usize & 0xF];
+        let rs = self.regs[(opcode as usize & 0x0F00) >> 8];
+        let rn = self.regs[(opcode as usize & 0xF000) >> 12];
+
+        assert_eq!(rd, 15);
+        assert_ne!(rd, opcode as usize & 0xF);
+
+        if self.cond::<COND>() {
+            self.regs[rd] = rm * rs + (rn * acc as u32);
+
+            if S {
+                self.cpsr.set_n(self.regs[rd] & (1 << 31) != 0);
+                if self.regs[rd] == 0 {
+                    self.cpsr.set_z(true)
+                };
+            }
+        }
+    }
+
+    /// MULL and MLAL. (check for r15 and rd != rm?)
+    pub fn multiply_long<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+        let acc = (opcode & (1 << 21)) != 0;
+        let signed = (opcode & (1 << 22)) != 0;
+
+        let rd_hi = (opcode as usize & 0x000F_0000) >> 16;
+        let rd_lo = (opcode as usize & 0xF000) >> 12;
+        let rs = self.regs[(opcode as usize & 0x0F00) >> 8];
+        let rm = self.regs[opcode as usize & 0xF];
+
+        let combined_rd = ((self.regs[rd_hi] as u64) << 32) | self.regs[rd_lo] as u64;
+
+        if self.cond::<COND>() {
+            // TODO: not needed?
+            let res = match signed {
+                false => rm as u64 * rs as u64 + (combined_rd * acc as u64),
+                true => (rm as i64 * rs as i64 + (combined_rd as i64 * acc as i64)) as u64,
+            };
+
+            self.regs[rd_hi] = ((res & 0xFFFF_0000) >> 32) as u32;
+            self.regs[rd_lo] = res as u32;
+
+            if S {
+                self.cpsr.set_n(res & (1 << 63) != 0);
+                if res == 0 {
+                    self.cpsr.set_z(true)
+                };
+            }
+        }
+    }
+
+    /// Single Data Swap (SWP). todo: bus parameter change.
+    pub fn swap<const COND: u8, const I: bool, const S: bool>(
+        &mut self,
+        opcode: u32,
+        bus: &mut Bus,
+    ) {
+        let bw_bit = (opcode & (1 << 22)) >> 22;
+
+        let rd = (opcode as usize & 0xF000) >> 12;
+        let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
+        let rm = self.regs[opcode as usize & 0xF];
+
+        if self.cond::<COND>() {
+            match bw_bit {
+                0 => {
+                    let swp_content = bus.read::<u32>(rn);
+                    bus.write(rn, rm);
+                    self.regs[rd] = swp_content;
+                }
+                1 => {
+                    let swp_content = bus.read::<u8>(rn);
+                    bus.write(rn, rm);
+                    self.regs[rd] = swp_content as u32;
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    /// Branch and Exchange.
+    pub fn bx<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+        let rn = self.regs[opcode as usize & 0xF];
+
+        if self.cond::<COND>() {
+            self.regs[15] = rn;
+
+            // Bit 0 of Rn decides decoding of subsequent instructions.
+            if rn & 1 == 0 {
+                self.cpsr.set_state(State::Arm);
+            } else {
+                self.cpsr.set_state(State::Thumb);
+            }
+        }
+    }
+
+    /// Branch and Link.
+    pub fn bl<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+        let offset = ((opcode & 0x00FF_FFFF) << 2) as i32;
+        let link = opcode & (1 << 24) != 0;
+
+        // TODO: r15 offset adjustment
+        if self.cond::<COND>() {
+            if link {
+                self.regs[14] = self.regs[15] + 4;
+            }
+
+            self.regs[15] = self.regs[15].wrapping_add_signed(offset + 8);
         }
     }
 

@@ -4,7 +4,7 @@ pub mod bus;
 pub mod game_pak;
 pub mod io;
 
-trait Mcu {
-    fn read<T: Unsigned>(address: u32) -> T;
-    fn write<T: Unsigned>(address: u32, value: T);
+pub trait Mcu {
+    fn read<T: Unsigned>(&mut self, address: u32) -> T;
+    fn write<T: Unsigned>(&mut self, address: u32, value: T);
 }

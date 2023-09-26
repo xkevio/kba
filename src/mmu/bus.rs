@@ -1,4 +1,6 @@
-use super::{game_pak::GamePak, io::Io};
+use num_traits::Unsigned;
+
+use super::{game_pak::GamePak, io::Io, Mcu};
 
 pub struct Bus {
     pub bios: [u8; 0x4000],
@@ -21,5 +23,15 @@ impl Default for Bus {
             oam: [0xFF; 0x400],
             game_pak: GamePak::default(),
         }
+    }
+}
+
+impl Mcu for Bus {
+    fn read<T: Unsigned>(&mut self, address: u32) -> T {
+        todo!()
+    }
+
+    fn write<T: Unsigned>(&mut self, address: u32, value: T) {
+        todo!()
     }
 }
