@@ -15,14 +15,36 @@ pub enum State {
     Thumb,
 }
 
-/// Each mode has own PSR (SPSR).
+/// Each mode has own PSR (SPSR) and some registers.
 pub enum Mode {
     User,
     Fiq(Spsr),
-    Supervisor(Spsr),
-    Abort(Spsr),
-    Irq(Spsr),
-    Undefined(Spsr),
+    Irq { spsr: Spsr, r13: u32, r14: u32 },
+    Supervisor { spsr: Spsr, r13: u32, r14: u32 },
+    Abort { spsr: Spsr, r13: u32, r14: u32 },
+    Undefined { spsr: Spsr, r13: u32, r14: u32 },
+}
+
+impl Mode {
+    const USER: u8 = 0b0000;
+    const FIQ: u8 = 0b0001;
+    const IRQ: u8 = 0b0010;
+    const SUPERVISOR: u8 = 0b0011;
+    const ABORT: u8 = 0b0111;
+    const UNDEFINED: u8 = 0b1011;
+
+    pub fn get_spsr(&self) -> Spsr {
+        use Mode::*;
+
+        match self {
+            User => unreachable!("No SPSR in User mode!"),
+            Fiq(spsr)
+            | Irq { spsr, .. }
+            | Supervisor { spsr, .. }
+            | Abort { spsr, .. }
+            | Undefined { spsr, .. } => *spsr,
+        }
+    }
 }
 
 bitfield! {
@@ -151,7 +173,7 @@ impl Arm7TDMI {
 
             if S {
                 if rd == 15 {
-                    self.cpsr.set_cpsr(self.get_spsr_mode().cpsr());
+                    self.cpsr.set_cpsr(self.spsr_mode.get_spsr().cpsr());
                 } else {
                     // Set Zero flag iff result is all zeros.
                     if result == 0 {
@@ -295,7 +317,7 @@ impl Arm7TDMI {
             if (opcode & 0x000F_0000) >> 16 == 0b1111 {
                 let rd = (opcode as usize & 0xF000) >> 12;
                 let source_psr = if opcode & (1 << 22) != 0 {
-                    self.get_spsr_mode()
+                    self.spsr_mode.get_spsr()
                 } else {
                     self.cpsr
                 };
@@ -312,10 +334,13 @@ impl Arm7TDMI {
     /// Software Interrupt.
     pub fn swi<const COND: u8>(&mut self, _opcode: u32) {
         if self.cond::<COND>() {
-            self.cpsr.set_mode(0b11);
-            self.spsr_mode = Mode::Supervisor(self.cpsr);
+            self.cpsr.set_mode(Mode::SUPERVISOR);
+            self.spsr_mode = Mode::Supervisor {
+                spsr: self.cpsr,
+                r13: 0,
+                r14: self.regs[15] + 1,
+            };
 
-            // todo: Set r14_svc to pc.
             self.regs[15] = 0x08;
         }
     }
@@ -350,18 +375,5 @@ impl Arm7TDMI {
     #[inline(always)]
     fn ror(&self, rm: u32, amount: u32) -> (u32, bool) {
         (rm.rotate_right(amount), rm & amount != 0)
-    }
-
-    #[inline(always)]
-    fn get_spsr_mode(&self) -> Spsr {
-        let cpsr_mode = self.cpsr.mode();
-        match &self.spsr_mode {
-            Mode::Fiq(spsr) if cpsr_mode == 0b0001 => *spsr,
-            Mode::Supervisor(spsr) if cpsr_mode == 0b0011 => *spsr,
-            Mode::Abort(spsr) if cpsr_mode == 0b0111 => *spsr,
-            Mode::Irq(spsr) if cpsr_mode == 0b0010 => *spsr,
-            Mode::Undefined(spsr) if cpsr_mode == 0b1011 => *spsr,
-            _ => unreachable!("mode error"),
-        }
     }
 }
