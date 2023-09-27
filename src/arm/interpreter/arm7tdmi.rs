@@ -1,15 +1,52 @@
+use crate::{mmu::bus::Bus, mmu::Mcu, ov};
 use proc_bitfield::bitfield;
 
-use crate::{mmu::bus::Bus, mmu::Mcu, ov};
+/// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
+type Spsr = Cpsr;
 
 pub struct Arm7TDMI {
     pub regs: [u32; 16],
     pub cpsr: Cpsr,
+    spsr_mode: Mode,
 }
 
 pub enum State {
     Arm,
     Thumb,
+}
+
+/// Each mode has own PSR (SPSR).
+pub enum Mode {
+    User,
+    Fiq(Spsr),
+    Supervisor(Spsr),
+    Abort(Spsr),
+    Irq(Spsr),
+    Undefined(Spsr),
+}
+
+bitfield! {
+    /// **CPSR**: Current Program Status Register.
+    ///
+    /// Unused here: bits 8-9 arm11 only, 10-23 & 25-26 reserved, 24 unnecessary, 27 armv5 upwards.
+    #[derive(Clone, Copy)]
+    pub struct Cpsr(pub u32) {
+        pub cpsr: u32 @ ..,
+        /// Mode bits (fiq, irq, svc, user...)
+        pub mode: u8 @ 0..=4,
+        /// ARM (0) or THUMB (1)
+        pub state: bool [State] @ 5,
+        pub fiq: bool @ 6,
+        pub irq: bool @ 7,
+        /// Overflow flag
+        pub v: bool @ 28,
+        /// Carry flag
+        pub c: bool @ 29,
+        /// Zero flag
+        pub z: bool @ 30,
+        /// Sign flag
+        pub n: bool @ 31,
+    }
 }
 
 impl From<bool> for State {
@@ -27,29 +64,6 @@ impl From<State> for bool {
             State::Arm => false,
             State::Thumb => true,
         }
-    }
-}
-
-bitfield! {
-    /// **CPSR**: Current Program Status Register.
-    ///
-    /// Unused here: bits 8-9 arm11 only, 10-23 & 25-26 reserved, 24 unnecessary, 27 armv5 upwards.
-    pub struct Cpsr(pub u32) {
-        pub cpsr: u32 @ ..,
-        /// Mode bits (fiq, irq, svc, user...)
-        pub mode: u8 @ 0..=4,
-        /// ARM (0) or THUMB (1)
-        pub state: bool [State] @ 5,
-        pub fiq: bool @ 6,
-        pub irq: bool @ 7,
-        /// Overflow flag
-        pub v: bool @ 28,
-        /// Carry flag
-        pub c: bool @ 29,
-        /// Zero flag
-        pub z: bool @ 30,
-        /// Sign flag
-        pub n: bool @ 31,
     }
 }
 
@@ -135,25 +149,26 @@ impl Arm7TDMI {
                 _ => unreachable!()
             };
 
-            // If S-bit is set and if rd != r15.
-            if S && ((opcode as usize & 0xF000) >> 12) != 15 {
-                // Set Zero flag iff result is all zeros.
-                if result == 0 {
-                    self.cpsr.set_z(true);
-                }
-                // Set N flag to bit 31 of result.
-                self.cpsr.set_n(result & (1 << 31) != 0);
-
-                // Logical operations.
-                if matches!(
-                    operation,
-                    0b0000 | 0b0001 | 0b1000 | 0b1001 | 0b1100 | 0b1101 | 0b1110 | 0b1111
-                ) {
-                    // TODO: set c to carry out of barrel shifter.
-                    self.cpsr.set_c(carry_out);
-                    // Arithmetic operations.
+            if S {
+                if rd == 15 {
+                    self.cpsr.set_cpsr(self.get_spsr_mode().cpsr());
                 } else {
-                    // TODO: set c to carry out of bit31 in ALU.
+                    // Set Zero flag iff result is all zeros.
+                    if result == 0 {
+                        self.cpsr.set_z(true);
+                    }
+                    // Set N flag to bit 31 of result.
+                    self.cpsr.set_n(result & (1 << 31) != 0);
+
+                    // Logical operations set Carry from barrel shifter.
+                    if matches!(
+                        operation,
+                        0b0000 | 0b0001 | 0b1000 | 0b1001 | 0b1100 | 0b1101 | 0b1110 | 0b1111
+                    ) {
+                        self.cpsr.set_c(carry_out);
+                    } else {
+                        // TODO: set c to carry out of bit31 in ALU.
+                    }
                 }
             }
 
@@ -164,7 +179,7 @@ impl Arm7TDMI {
     }
 
     /// MUL and MLA. (check for r15 and rd != rm?)
-    pub fn multiply<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+    pub fn multiply<const COND: u8, const S: bool>(&mut self, opcode: u32) {
         let acc = (opcode & (1 << 21)) != 0;
 
         let rd = (opcode as usize & 0x000F_0000) >> 16;
@@ -172,7 +187,7 @@ impl Arm7TDMI {
         let rs = self.regs[(opcode as usize & 0x0F00) >> 8];
         let rn = self.regs[(opcode as usize & 0xF000) >> 12];
 
-        assert_eq!(rd, 15);
+        assert_ne!(rd, 15);
         assert_ne!(rd, opcode as usize & 0xF);
 
         if self.cond::<COND>() {
@@ -188,7 +203,7 @@ impl Arm7TDMI {
     }
 
     /// MULL and MLAL. (check for r15 and rd != rm?)
-    pub fn multiply_long<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+    pub fn multiply_long<const COND: u8, const S: bool>(&mut self, opcode: u32) {
         let acc = (opcode & (1 << 21)) != 0;
         let signed = (opcode & (1 << 22)) != 0;
 
@@ -219,11 +234,7 @@ impl Arm7TDMI {
     }
 
     /// Single Data Swap (SWP). todo: bus parameter change.
-    pub fn swap<const COND: u8, const I: bool, const S: bool>(
-        &mut self,
-        opcode: u32,
-        bus: &mut Bus,
-    ) {
+    pub fn swap<const COND: u8>(&mut self, opcode: u32, bus: &mut Bus) {
         let bw_bit = (opcode & (1 << 22)) >> 22;
 
         let rd = (opcode as usize & 0xF000) >> 12;
@@ -248,7 +259,7 @@ impl Arm7TDMI {
     }
 
     /// Branch and Exchange.
-    pub fn bx<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+    pub fn bx<const COND: u8>(&mut self, opcode: u32) {
         let rn = self.regs[opcode as usize & 0xF];
 
         if self.cond::<COND>() {
@@ -264,7 +275,7 @@ impl Arm7TDMI {
     }
 
     /// Branch and Link.
-    pub fn bl<const COND: u8, const I: bool, const S: bool>(&mut self, opcode: u32) {
+    pub fn bl<const COND: u8>(&mut self, opcode: u32) {
         let offset = ((opcode & 0x00FF_FFFF) << 2) as i32;
         let link = opcode & (1 << 24) != 0;
 
@@ -275,6 +286,37 @@ impl Arm7TDMI {
             }
 
             self.regs[15] = self.regs[15].wrapping_add_signed(offset + 8);
+        }
+    }
+
+    pub fn psr_transfer<const COND: u8, const I: bool>(&mut self, opcode: u32) {
+        if self.cond::<COND>() {
+            // MRS (transfer PSR contents to register)
+            if (opcode & 0x000F_0000) >> 16 == 0b1111 {
+                let rd = (opcode as usize & 0xF000) >> 12;
+                let source_psr = if opcode & (1 << 22) != 0 {
+                    self.get_spsr_mode()
+                } else {
+                    self.cpsr
+                };
+
+                self.regs[rd] = source_psr.cpsr();
+            }
+            // MSR (transfer register contents to PSR)
+            else {
+                todo!()
+            }
+        }
+    }
+
+    /// Software Interrupt.
+    pub fn swi<const COND: u8>(&mut self, _opcode: u32) {
+        if self.cond::<COND>() {
+            self.cpsr.set_mode(0b11);
+            self.spsr_mode = Mode::Supervisor(self.cpsr);
+
+            // todo: Set r14_svc to pc.
+            self.regs[15] = 0x08;
         }
     }
 
@@ -308,5 +350,18 @@ impl Arm7TDMI {
     #[inline(always)]
     fn ror(&self, rm: u32, amount: u32) -> (u32, bool) {
         (rm.rotate_right(amount), rm & amount != 0)
+    }
+
+    #[inline(always)]
+    fn get_spsr_mode(&self) -> Spsr {
+        let cpsr_mode = self.cpsr.mode();
+        match &self.spsr_mode {
+            Mode::Fiq(spsr) if cpsr_mode == 0b0001 => *spsr,
+            Mode::Supervisor(spsr) if cpsr_mode == 0b0011 => *spsr,
+            Mode::Abort(spsr) if cpsr_mode == 0b0111 => *spsr,
+            Mode::Irq(spsr) if cpsr_mode == 0b0010 => *spsr,
+            Mode::Undefined(spsr) if cpsr_mode == 0b1011 => *spsr,
+            _ => unreachable!("mode error"),
+        }
     }
 }
