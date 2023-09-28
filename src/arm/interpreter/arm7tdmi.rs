@@ -1,13 +1,19 @@
+use std::collections::HashMap;
+
 use crate::{mmu::bus::Bus, mmu::Mcu, ov};
-use proc_bitfield::bitfield;
+use proc_bitfield::{bitfield, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
 type Spsr = Cpsr;
+/// Each mode has its own banked registers (mostly r13 and r14).
+type BankedRegisters = (Spsr, [u32; 16]);
 
 pub struct Arm7TDMI {
     pub regs: [u32; 16],
     pub cpsr: Cpsr,
-    spsr_mode: Mode,
+
+    spsr: Spsr,
+    banked_regs: HashMap<Mode, BankedRegisters>,
 }
 
 pub enum State {
@@ -16,35 +22,15 @@ pub enum State {
 }
 
 /// Each mode has own PSR (SPSR) and some registers.
+/// See `banked_regs` in `Arm7TDMI`.
+#[derive(ConvRaw, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
-    User,
-    Fiq(Spsr),
-    Irq { spsr: Spsr, r13: u32, r14: u32 },
-    Supervisor { spsr: Spsr, r13: u32, r14: u32 },
-    Abort { spsr: Spsr, r13: u32, r14: u32 },
-    Undefined { spsr: Spsr, r13: u32, r14: u32 },
-}
-
-impl Mode {
-    const USER: u8 = 0b0000;
-    const FIQ: u8 = 0b0001;
-    const IRQ: u8 = 0b0010;
-    const SUPERVISOR: u8 = 0b0011;
-    const ABORT: u8 = 0b0111;
-    const UNDEFINED: u8 = 0b1011;
-
-    pub fn get_spsr(&self) -> Spsr {
-        use Mode::*;
-
-        match self {
-            User => unreachable!("No SPSR in User mode!"),
-            Fiq(spsr)
-            | Irq { spsr, .. }
-            | Supervisor { spsr, .. }
-            | Abort { spsr, .. }
-            | Undefined { spsr, .. } => *spsr,
-        }
-    }
+    User = 0b0000,
+    Fiq = 0b0001,
+    Irq = 0b0010,
+    Supervisor = 0b0011,
+    Abort = 0b0111,
+    Undefined = 0b1011,
 }
 
 bitfield! {
@@ -55,8 +41,8 @@ bitfield! {
     pub struct Cpsr(pub u32) {
         pub cpsr: u32 @ ..,
         /// Mode bits (fiq, irq, svc, user...)
-        pub mode: u8 @ 0..=4,
-        /// ARM (0) or THUMB (1)
+        pub mode: u8 [try Mode] @ 0..=4,
+        /// ARM (0) or THUMB (1) - T bit
         pub state: bool [State] @ 5,
         pub fiq: bool @ 6,
         pub irq: bool @ 7,
@@ -90,7 +76,7 @@ impl From<State> for bool {
 }
 
 impl Arm7TDMI {
-    /// If I is false, operand 2 is a register and gets shifted.
+    /// If `I` is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.
     pub fn barrel_shifter<const I: bool>(&self, op: u16) -> (u32, bool) {
         if I {
@@ -173,7 +159,8 @@ impl Arm7TDMI {
 
             if S {
                 if rd == 15 {
-                    self.cpsr.set_cpsr(self.spsr_mode.get_spsr().cpsr());
+                    self.cpsr
+                        .set_cpsr(self.banked_regs[&self.cpsr.mode().unwrap()].0.cpsr());
                 } else {
                     // Set Zero flag iff result is all zeros.
                     if result == 0 {
@@ -311,22 +298,40 @@ impl Arm7TDMI {
         }
     }
 
+    /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
     pub fn psr_transfer<const COND: u8, const I: bool>(&mut self, opcode: u32) {
         if self.cond::<COND>() {
+            let mut source_psr = if opcode & (1 << 22) != 0 {
+                self.spsr
+            } else {
+                self.cpsr
+            };
+
             // MRS (transfer PSR contents to register)
             if (opcode & 0x000F_0000) >> 16 == 0b1111 {
                 let rd = (opcode as usize & 0xF000) >> 12;
-                let source_psr = if opcode & (1 << 22) != 0 {
-                    self.spsr_mode.get_spsr()
-                } else {
-                    self.cpsr
-                };
-
                 self.regs[rd] = source_psr.cpsr();
             }
             // MSR (transfer register contents to PSR)
+            else if (opcode & 0x000F_0000) >> 16 == 0b1001 {
+                let rm = self.regs[opcode as usize & 0xF];
+                source_psr.set_cpsr(rm);
+            }
+            // MSR (transfer register contents or immediate to PSR flag bits)
             else {
-                todo!()
+                if !I {
+                    let rm = self.regs[opcode as usize & 0xF];
+                    source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
+                } else {
+                    let (imm, _) = self.barrel_shifter::<I>(opcode as u16);
+                    source_psr.set_cpsr((imm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
+                }
+            }
+
+            if opcode & (1 << 22) != 0 {
+                self.spsr = source_psr;
+            } else {
+                self.cpsr = source_psr;
             }
         }
     }
@@ -334,15 +339,27 @@ impl Arm7TDMI {
     /// Software Interrupt.
     pub fn swi<const COND: u8>(&mut self, _opcode: u32) {
         if self.cond::<COND>() {
-            self.cpsr.set_mode(Mode::SUPERVISOR);
-            self.spsr_mode = Mode::Supervisor {
-                spsr: self.cpsr,
-                r13: 0,
-                r14: self.regs[15] + 1,
-            };
+            self.swap_regs(Mode::Supervisor);
+            self.cpsr.set_mode(Mode::Supervisor);
 
+            self.spsr = self.cpsr;
+            self.regs[14] = self.regs[15];
             self.regs[15] = 0x08;
         }
+    }
+
+    /// Swap banked registers on mode change. Call before changing mode in CPSR.
+    fn swap_regs(&mut self, new_mode: Mode) {
+        let (spsr_mode, bank_regs) = self.banked_regs[&new_mode];
+        let Ok(current_mode) = self.cpsr.mode() else {
+            return;
+        };
+
+        self.banked_regs
+            .insert(current_mode, (self.spsr, self.regs));
+
+        self.spsr = spsr_mode;
+        self.regs = bank_regs;
     }
 
     /// Logical shift left, returns result and carry out.
