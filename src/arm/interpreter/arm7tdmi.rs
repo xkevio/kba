@@ -348,6 +348,52 @@ impl Arm7TDMI {
         }
     }
 
+    /// LDR and STR.
+    pub fn single_data_transfer<
+        const COND: u8,
+        const I: bool,
+        const P: bool,
+        const U: bool,
+        const B: bool,
+        const W: bool,
+        const L: bool,
+    >(
+        &mut self,
+        opcode: u32,
+        bus: &mut Bus,
+    ) {
+        if self.cond::<COND>() {
+            let rn = (opcode as usize & 0x000F_0000) >> 16;
+            let rd = (opcode as usize & 0xF000) >> 12;
+            let offset = opcode & 0x0FFF; // todo shift.
+
+            let base_with_offset = if U {
+                self.regs[rn] + offset
+            } else {
+                self.regs[rn] - offset
+            };
+
+            let address = if P { base_with_offset } else { self.regs[rn] };
+
+            // Load from memory if L, else store register into memory.
+            if L {
+                let val = if B {
+                    bus.read::<u8>(address) as u32
+                } else {
+                    bus.read::<u32>(address)
+                };
+
+                if W {
+                    self.regs[rn] = address;
+                }
+
+                self.regs[rd] = val;
+            } else {
+                todo!()
+            }
+        }
+    }
+
     /// Swap banked registers on mode change. Call before changing mode in CPSR.
     fn swap_regs(&mut self, new_mode: Mode) {
         let (spsr_mode, bank_regs) = self.banked_regs[&new_mode];
