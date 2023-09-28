@@ -7,6 +7,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
-num-traits = "0.2.16"
 proc-bitfield = "0.3.0"
 sdl2 = "0.35.2"

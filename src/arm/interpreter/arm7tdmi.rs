@@ -8,6 +8,7 @@ type Spsr = Cpsr;
 /// Each mode has its own banked registers (mostly r13 and r14).
 type BankedRegisters = (Spsr, [u32; 16]);
 
+#[derive(Default)]
 pub struct Arm7TDMI {
     pub regs: [u32; 16],
     pub cpsr: Cpsr,
@@ -37,7 +38,7 @@ bitfield! {
     /// **CPSR**: Current Program Status Register.
     ///
     /// Unused here: bits 8-9 arm11 only, 10-23 & 25-26 reserved, 24 unnecessary, 27 armv5 upwards.
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct Cpsr(pub u32) {
         pub cpsr: u32 @ ..,
         /// Mode bits (fiq, irq, svc, user...)
@@ -253,13 +254,13 @@ impl Arm7TDMI {
         if self.cond::<COND>() {
             match bw_bit {
                 0 => {
-                    let swp_content = bus.read::<u32>(rn);
-                    bus.write(rn, rm);
+                    let swp_content = bus.read32(rn);
+                    bus.write32(rn, rm);
                     self.regs[rd] = swp_content;
                 }
                 1 => {
-                    let swp_content = bus.read::<u8>(rn);
-                    bus.write(rn, rm);
+                    let swp_content = bus.read8(rn);
+                    bus.write32(rn, rm);
                     self.regs[rd] = swp_content as u32;
                 }
                 _ => unreachable!(),
@@ -378,9 +379,9 @@ impl Arm7TDMI {
             // Load from memory if L, else store register into memory.
             if L {
                 let val = if B {
-                    bus.read::<u8>(address) as u32
+                    bus.read8(address) as u32
                 } else {
-                    bus.read::<u32>(address)
+                    bus.read32(address)
                 };
 
                 if W {

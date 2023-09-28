@@ -1,9 +1,7 @@
-use num_traits::Unsigned;
-
 use super::{game_pak::GamePak, io::Io, Mcu};
 
 pub struct Bus {
-    pub bios: [u8; 0x4000],
+    pub bios: &'static [u8],
     pub wram: [u8; 0x48000],
     pub io: Io,
     pub palette_ram: [u8; 0x400],
@@ -15,7 +13,7 @@ pub struct Bus {
 impl Default for Bus {
     fn default() -> Self {
         Self {
-            bios: [0xFF; 0x4000],
+            bios: include_bytes!("gba_bios.bin"),
             wram: [0xFF; 0x48000],
             io: Io::default(),
             palette_ram: [0xFF; 0x400],
@@ -27,11 +25,31 @@ impl Default for Bus {
 }
 
 impl Mcu for Bus {
-    fn read<T: Unsigned>(&mut self, address: u32) -> T {
-        todo!()
+    fn read8(&mut self, address: u32) -> u8 {
+        match address {
+            0x0000..=0x3FFF => self.bios[address as usize],
+            0x0200_0000..=0x0203_FFFF => self.wram[address as usize - 0x0200_0000],
+            0x0300_0000..=0x0300_7FFF => self.wram[address as usize - 0x02FC_0000],
+            0x0400_0000..=0x0400_03FE => self.io.read8(address - 0x0400_0000),
+            0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000],
+            0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000],
+            0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000],
+            0x0800_0000..=0x0DFF_FFFF => self.game_pak.read8(address - 0x0800_0000),
+            // TODO: sram
+            _ => unreachable!(),
+        }
     }
 
-    fn write<T: Unsigned>(&mut self, address: u32, value: T) {
-        todo!()
+    fn write8(&mut self, address: u32, value: u8) {
+        match address {
+            0x0200_0000..=0x0203_FFFF => self.wram[address as usize - 0x0200_0000] = value,
+            0x0300_0000..=0x0300_7FFF => self.wram[address as usize - 0x02FC_0000] = value,
+            0x0400_0000..=0x0400_03FE => self.io.write8(address - 0x0400_0000, value),
+            0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
+            0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
+            0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
+            // TODO: sram
+            _ => unreachable!(),
+        }
     }
 }

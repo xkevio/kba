@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use gba::{LCD_HEIGHT, LCD_WIDTH};
+use gba::{Gba, LCD_HEIGHT, LCD_WIDTH};
 use sdl2::event::Event;
 
 mod arm;
@@ -10,6 +10,11 @@ mod mmu;
 type SdlResult<T> = Result<T, String>;
 
 fn main() -> SdlResult<()> {
+    let rom_path = std::env::args().nth(1).expect("A rom has to be specified!");
+    let rom = std::fs::read(rom_path).map_err(|e| e.to_string())?;
+
+    let mut kba = Gba::with_rom(&rom);
+
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
 
@@ -31,6 +36,7 @@ fn main() -> SdlResult<()> {
             }
         }
 
+        kba.run();
         canvas.present();
     }
 
