@@ -366,7 +366,11 @@ impl Arm7TDMI {
         if self.cond::<COND>() {
             let rn = (opcode as usize & 0x000F_0000) >> 16;
             let rd = (opcode as usize & 0xF000) >> 12;
-            let offset = opcode & 0x0FFF; // todo shift.
+            let offset = if !I {
+                opcode & 0x0FFF
+            } else {
+                self.barrel_shifter::<false>(opcode as u16).0
+            };
 
             let base_with_offset = if U {
                 self.regs[rn] + offset
@@ -384,13 +388,76 @@ impl Arm7TDMI {
                     bus.read32(address)
                 };
 
-                if W {
-                    self.regs[rn] = address;
-                }
-
                 self.regs[rd] = val;
             } else {
-                todo!()
+                if B {
+                    bus.write8(address, self.regs[rd] as u8);
+                } else {
+                    bus.write32(address, self.regs[rd]);
+                }
+            }
+
+            if W {
+                self.regs[rn] = address;
+            }
+        }
+    }
+
+    /// LDRH/STRH and LDRSB/LDRSH
+    pub fn hw_signed_data_transfer<
+        const COND: u8,
+        const I: bool,
+        const P: bool,
+        const U: bool,
+        const W: bool,
+        const L: bool,
+        const S: bool,
+        const H: bool,
+    >(
+        &mut self,
+        opcode: u32,
+        bus: &mut Bus,
+    ) {
+        if self.cond::<COND>() {
+            let rn = (opcode as usize & 0x000F_0000) >> 16;
+            let rd = (opcode as usize & 0xF000) >> 12;
+            let offset = if !I {
+                opcode & 0xF
+            } else {
+                self.regs[opcode as usize & 0xF]
+            };
+
+            let base_with_offset = if U {
+                self.regs[rn] + offset
+            } else {
+                self.regs[rn] - offset
+            };
+
+            let address = if P { base_with_offset } else { self.regs[rn] };
+
+            // Load from memory if L, else store register into memory.
+            if L {
+                if !S {
+                    self.regs[rd] = bus.read16(address) as u32;
+                } else {
+                    self.regs[rd] = match H {
+                        false => {
+                            let sb = bus.read8(address);
+                            ((sb as u32 & (1 << 7) >> 7) * 0xFFFF_FF00) | sb as u32
+                        }
+                        true => {
+                            let shw = bus.read16(address);
+                            ((shw as u32 & (1 << 15) >> 15) * 0xFFFF_0000) | shw as u32
+                        }
+                    }
+                }
+            } else {
+                assert_eq!(S, false);
+                bus.write16(address, self.regs[rd] as u16);
+            }
+
+            if W {
+                self.regs[rn] = address;
             }
         }
     }
