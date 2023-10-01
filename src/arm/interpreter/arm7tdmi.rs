@@ -77,6 +77,22 @@ impl From<State> for bool {
 }
 
 impl Arm7TDMI {
+    // TODO.
+    pub fn setup_registers() -> Self {
+        let mut regs = [0; 16];
+        regs[15] = 0x0800_0000;
+
+        Self {
+            regs,
+            ..Default::default()
+        }
+    }
+
+    pub fn cycle(&mut self, bus: &mut Bus) {
+        let opcode = bus.read32(self.regs[15]);
+        self.regs[15] += 4;
+    }
+
     /// If `I` is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.
     pub fn barrel_shifter<const I: bool>(&self, op: u16) -> (u32, bool) {
