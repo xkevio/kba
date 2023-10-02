@@ -91,6 +91,8 @@ impl Arm7TDMI {
     pub fn cycle(&mut self, bus: &mut Bus) {
         let opcode = bus.read32(self.regs[15]);
         self.regs[15] += 4;
+
+        // TODO: move cond check here.
     }
 
     /// If `I` is false, operand 2 is a register and gets shifted.
