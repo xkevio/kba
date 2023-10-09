@@ -20,19 +20,59 @@ fn decode(index: u16) -> String {
     if index & 0b1100_0000_0000 == 0b0000_0000_0000 {
         let imm = index & (1 << 9) != 0;
         let s_bit = index & (1 << 4) != 0;
-        format!("data_processing<{}, {}>", imm, s_bit)
+        format!("Arm7TDMI::data_processing::<{}, {}>", imm, s_bit)
     } else if index & 0b0001_1000_1111 == 0b0000_0000_1001 {
         let s_bit = index & (1 << 4) != 0;
-        format!("multiply<{}>", s_bit)
+        format!("Arm7TDMI::multiply::<{}>", s_bit)
     } else if index & 0b0001_1000_1111 == 0b0000_1000_1001 {
         let s_bit = index & (1 << 4) != 0;
-        format!("multiply_long<{}>", s_bit)
+        format!("Arm7TDMI::multiply_long::<{}>", s_bit)
     } else if index & 0b0001_1000_1111 == 0b0001_0000_1001 {
-        // TODO: make B-bit const generic
-        format!("swap")
+        let b_bit = index & (1 << 6) != 0;
+        format!("Arm7TDMI::swap::<{}>", b_bit)
     } else if index & 0b0001_0010_1111 == 0b0001_0010_0001 {
-        format!("bx")
+        format!("Arm7TDMI::bx")
+    } else if index & 0b1110_0000_0000 == 0b1010_0000_0000 {
+        format!("Arm7TDMI::bl")
+    } else if index & 0b0000_0100_1001 == 0b0000_0000_1001 {
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+        let s_bit = index & (1 << 2) != 0;
+        let h_bit = index & (1 << 1) != 0;
+
+        format!(
+            "Arm7TDMI::hw_signed_data_transfer::<false, {}, {}, {}, {}, {}, {}>",
+            p_bit, u_bit, w_bit, l_bit, s_bit, h_bit
+        )
+    } else if index & 0b0000_0100_1001 == 0b0000_0100_1001 {
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+        let s_bit = index & (1 << 2) != 0;
+        let h_bit = index & (1 << 1) != 0;
+
+        format!(
+            "Arm7TDMI::hw_signed_data_transfer::<true, {}, {}, {}, {}, {}, {}>",
+            p_bit, u_bit, w_bit, l_bit, s_bit, h_bit
+        )
+    } else if index & 0b1100_0000_0000 == 0b0100_0000_0000 {
+        let i_bit = index & (1 << 9) != 0;
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let b_bit = index & (1 << 6) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+
+        format!(
+            "Arm7TDMI::single_data_transfer::<{}, {}, {}, {}, {}, {}>",
+            i_bit, p_bit, u_bit, b_bit, w_bit, l_bit
+        )
+    } else if index & 0b1111_0000_0000 == 0b1111_0000_0000 {
+        format!("Arm7TDMI::swi")
     } else {
-        todo!()
+        format!("Arm7TDMI::dummy")
     }
 }

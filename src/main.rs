@@ -15,7 +15,7 @@ fn main() -> SdlResult<()> {
     let rom = std::fs::read(rom_path).map_err(|e| e.to_string())?;
 
     let mut kba = Gba::with_rom(&rom);
-    kba.bus.game_pak.rom = rom;
+    kba.cpu.bus.game_pak.rom = rom;
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;
@@ -49,7 +49,7 @@ fn main() -> SdlResult<()> {
         if kba.cycles % 266 == 0 {
             texture.with_lock(None, |buffer: &mut [u8], _: usize| {
                 // bg mode 3
-                for (i, px) in kba.bus.vram.chunks(2).enumerate() {
+                for (i, px) in kba.cpu.bus.vram[..76800].chunks(2).enumerate() {
                     let color555 = u16::from_be_bytes([px[1], px[0]]);
                     let [r, g, b, a] = rgb555_to_color(color555).to_be_bytes();
 
