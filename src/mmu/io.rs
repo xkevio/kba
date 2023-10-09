@@ -8,7 +8,5 @@ impl Mcu for Io {
         todo!()
     }
 
-    fn write8(&mut self, _address: u32, _value: u8) {
-        todo!()
-    }
+    fn write8(&mut self, _address: u32, _value: u8) {}
 }

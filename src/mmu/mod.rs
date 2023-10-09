@@ -2,6 +2,14 @@ pub mod bus;
 pub mod game_pak;
 pub mod io;
 
+/// Create array on the heap, ideally without blowing the stack first.
+#[macro_export]
+macro_rules! box_arr {
+    ($el:expr; $size:expr) => {
+        vec![$el; $size].into_boxed_slice().try_into().unwrap()
+    };
+}
+
 pub trait Mcu {
     fn read32(&mut self, address: u32) -> u32 {
         u32::from_le_bytes([

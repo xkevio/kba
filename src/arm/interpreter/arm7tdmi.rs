@@ -94,20 +94,17 @@ impl Arm7TDMI {
     }
 
     pub fn cycle(&mut self) {
-        dbg!(self.regs[15] - 0x0800_0000);
         let opcode = self.bus.read32(self.regs[15]);
-        self.regs[15] += 4;
 
         let cond = (opcode & 0xF000_0000) >> 28;
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         // TODO: check for ARM/THUMB state first.
         if self.cond(cond as u8) {
-            // println!("{opcode:#034b}");
-            // println!("{op_index:#014b}");
-
             ARM_INSTRUCTIONS[op_index as usize](self, opcode);
         }
+
+        self.regs[15] += 4;
     }
 
     /// If `I` is false, operand 2 is a register and gets shifted.
@@ -115,7 +112,7 @@ impl Arm7TDMI {
     pub fn barrel_shifter<const I: bool>(&self, op: u16) -> (u32, bool) {
         if I {
             (
-                ((op & 0xFF) as u32).rotate_right((op as u32 & 0x0F00) * 2),
+                ((op & 0xFF) as u32).rotate_right(((op as u32 & 0x0F00) >> 8) * 2),
                 false,
             )
         } else {
@@ -181,7 +178,7 @@ impl Arm7TDMI {
             0b0111 => ov!(op2.overflowing_sub(rn + self.cpsr.c() as u32 - 1), opcode, self),
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
-            0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), opcode, self)},
+            0b1010 => {is_intmd = true; ov!((rn as i32).overflowing_sub(op2 as i32), opcode, self)},
             0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), opcode, self)},
             0b1100 => rn | op2,
             0b1101 => op2,
@@ -201,11 +198,6 @@ impl Arm7TDMI {
                 }
                 // Set N flag to bit 31 of result.
                 self.cpsr.set_n(result & (1 << 31) != 0);
-
-                dbg!(rn);
-                dbg!(op2);
-                dbg!(self.cpsr.n());
-                dbg!(self.cpsr.v());
 
                 // Logical operations set Carry from barrel shifter.
                 if matches!(
@@ -325,7 +317,6 @@ impl Arm7TDMI {
             self.regs[14] = self.regs[15] + 4;
         }
 
-        // TODO: offset
         self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 8 - 4);
     }
 
@@ -440,7 +431,7 @@ impl Arm7TDMI {
     ) {
         let rn = (opcode as usize & 0x000F_0000) >> 16;
         let rd = (opcode as usize & 0xF000) >> 12;
-        let offset = if !I {
+        let offset = if I {
             opcode & 0xF
         } else {
             self.regs[opcode as usize & 0xF]

@@ -13,6 +13,6 @@ macro_rules! ov {
             }
         }
 
-        res
+        res as u32
     }};
 }

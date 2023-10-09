@@ -1,11 +1,13 @@
+use crate::box_arr;
+
 use super::{game_pak::GamePak, io::Io, Mcu};
 
 pub struct Bus {
     pub bios: &'static [u8],
-    pub wram: [u8; 0x48000],
+    pub wram: Box<[u8; 0x48000]>,
     pub io: Io,
     pub palette_ram: [u8; 0x400],
-    pub vram: [u8; 0x18000],
+    pub vram: Box<[u8; 0x18000]>,
     pub oam: [u8; 0x400],
     pub game_pak: GamePak,
 }
@@ -14,10 +16,10 @@ impl Default for Bus {
     fn default() -> Self {
         Self {
             bios: include_bytes!("gba_bios.bin"),
-            wram: [0xFF; 0x48000],
+            wram: box_arr!(0xFF; 0x48000),
             io: Io::default(),
             palette_ram: [0xFF; 0x400],
-            vram: [0xFF; 0x18000],
+            vram: box_arr!(0xFF; 0x18000),
             oam: [0xFF; 0x400],
             game_pak: GamePak::default(),
         }
@@ -49,7 +51,7 @@ impl Mcu for Bus {
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
             // TODO: sram
-            _ => unreachable!(),
+            _ => unreachable!("{}", format!("{address:X?}")),
         }
     }
 }

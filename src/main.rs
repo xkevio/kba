@@ -45,7 +45,7 @@ fn main() -> SdlResult<()> {
 
         kba.run();
 
-        // For now, update every 266 cycles (60 frames).
+        // For now, update every 266 (266666) cycles (60 frames).
         if kba.cycles % 266 == 0 {
             texture.with_lock(None, |buffer: &mut [u8], _: usize| {
                 // bg mode 3
