@@ -99,9 +99,11 @@ impl Arm7TDMI {
         let cond = (opcode & 0xF000_0000) >> 28;
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
-        // TODO: check for ARM/THUMB state first.
         if self.cond(cond as u8) {
-            ARM_INSTRUCTIONS[op_index as usize](self, opcode);
+            match self.cpsr.state() {
+                State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
+                State::Thumb => todo!()
+            }
         }
 
         self.regs[15] += 4;
