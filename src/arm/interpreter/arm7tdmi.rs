@@ -31,12 +31,12 @@ pub enum State {
 /// See `banked_regs` in `Arm7TDMI`.
 #[derive(ConvRaw, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum Mode {
-    User = 0b0000,
-    Fiq = 0b0001,
-    Irq = 0b0010,
-    Supervisor = 0b0011,
-    Abort = 0b0111,
-    Undefined = 0b1011,
+    User = 0b10000,
+    Fiq = 0b10001,
+    Irq = 0b10010,
+    Supervisor = 0b10011,
+    Abort = 0b10111,
+    Undefined = 0b11011,
 }
 
 bitfield! {
@@ -100,10 +100,14 @@ impl Arm7TDMI {
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         if self.cond(cond as u8) {
+            // println!("{:X?}\n", self.regs);
             match self.cpsr.state() {
                 State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
-                State::Thumb => todo!()
+                State::Thumb => todo!(),
             }
+
+            // println!("{:#X}", opcode);
+            // println!("Z: {}", self.cpsr.z());
         }
 
         self.regs[15] += 4;
@@ -194,9 +198,7 @@ impl Arm7TDMI {
                     .set_cpsr(self.banked_regs[&self.cpsr.mode().unwrap()].0.cpsr());
             } else {
                 // Set Zero flag iff result is all zeros.
-                if result == 0 {
-                    self.cpsr.set_z(true);
-                }
+                self.cpsr.set_z(result == 0);
                 // Set N flag to bit 31 of result.
                 self.cpsr.set_n(result & (1 << 31) != 0);
 
@@ -320,6 +322,7 @@ impl Arm7TDMI {
         }
 
         self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 8 - 4);
+        // println!("{:#X}", self.regs[15]);
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
@@ -511,7 +514,7 @@ impl Arm7TDMI {
                     address = if U { address + 1 } else { address - 1 };
                 }
 
-                if W {
+                if W || !P {
                     self.regs[rn] = address;
                 }
             }
