@@ -448,7 +448,6 @@ impl Arm7TDMI {
         // Load from memory if L, else store register into memory.
         if L {
             if !S {
-                println!("{:#X}", self.bus.read16(address));
                 self.regs[rd] = self.bus.read16(address) as u32;
             } else {
                 self.regs[rd] = match H {
