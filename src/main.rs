@@ -43,23 +43,25 @@ fn main() -> SdlResult<()> {
             }
         }
 
-        kba.run();
-
-        // For now, update every 266 (266666) cycles (60 frames).
-        if kba.cycles % 266 == 0 {
-            texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-                // bg mode 3
-                for (i, px) in kba.cpu.bus.vram[..76800].chunks(2).enumerate() {
-                    let color555 = u16::from_be_bytes([px[1], px[0]]);
-                    let [r, g, b, a] = rgb555_to_color(color555).to_be_bytes();
-
-                    buffer[i * 4] = r;
-                    buffer[i * 4 + 1] = g;
-                    buffer[i * 4 + 2] = b;
-                    buffer[i * 4 + 3] = a;
-                }
-            })?;
+        // For now, update every 266_666 cycles (60 frames).
+        while kba.cycles < 266_666 {
+            kba.run();
         }
+
+        texture.with_lock(None, |buffer: &mut [u8], _: usize| {
+            // bg mode 3
+            for (i, px) in kba.cpu.bus.vram[..76800].chunks(2).enumerate() {
+                let color555 = u16::from_be_bytes([px[1], px[0]]);
+                let [r, g, b, a] = rgb555_to_color(color555).to_be_bytes();
+
+                buffer[i * 4] = r;
+                buffer[i * 4 + 1] = g;
+                buffer[i * 4 + 2] = b;
+                buffer[i * 4 + 3] = a;
+            }
+        })?;
+
+        kba.cycles = 0;
 
         canvas.clear();
         canvas.copy(&texture, None, None)?;
