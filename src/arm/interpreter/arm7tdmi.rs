@@ -165,7 +165,6 @@ impl Arm7TDMI {
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
 
-        // TODO: carry out from barrel shifter
         #[rustfmt::skip]
         let result = match operation {
             0b0000 => rn & op2,
@@ -207,6 +206,7 @@ impl Arm7TDMI {
                     self.cpsr.set_c(carry_out);
                 } else {
                     // TODO: set c to carry out of bit31 in ALU.
+                    // TODO: switch ov check and carry check.
                 }
             }
         }
@@ -411,8 +411,8 @@ impl Arm7TDMI {
             }
         }
 
-        if W {
-            self.regs[rn] = address;
+        if W || !P {
+            self.regs[rn] = base_with_offset;
         }
     }
 
@@ -448,16 +448,17 @@ impl Arm7TDMI {
         // Load from memory if L, else store register into memory.
         if L {
             if !S {
+                println!("{:#X}", self.bus.read16(address));
                 self.regs[rd] = self.bus.read16(address) as u32;
             } else {
                 self.regs[rd] = match H {
                     false => {
                         let sb = self.bus.read8(address);
-                        ((sb as u32 & (1 << 7) >> 7) * 0xFFFF_FF00) | sb as u32
+                        sb as i32 as u32
                     }
                     true => {
                         let shw = self.bus.read16(address);
-                        ((shw as u32 & (1 << 15) >> 15) * 0xFFFF_0000) | shw as u32
+                        shw as i32 as u32
                     }
                 }
             }
@@ -466,8 +467,53 @@ impl Arm7TDMI {
             self.bus.write16(address, self.regs[rd] as u16);
         }
 
-        if W {
-            self.regs[rn] = address;
+        if W || !P {
+            self.regs[rn] = base_with_offset;
+        }
+    }
+
+    /// LDM/STM
+    pub fn block_data_transfer<
+        const P: bool,
+        const U: bool,
+        const S: bool,
+        const W: bool,
+        const L: bool,
+    >(
+        &mut self,
+        opcode: u32,
+    ) {
+        let rn = (opcode as usize & 0x000F_0000) >> 16;
+        let reg_list = (0..16)
+            .map(|i| (opcode as u16) & (1 << i) != 0)
+            .collect::<Vec<_>>();
+
+        let mut address = self.regs[rn];
+
+        for (r, rb) in reg_list.iter().enumerate() {
+            if *rb {
+                if P {
+                    address = if U { address + 1 } else { address - 1 };
+
+                    if L {
+                        self.regs[r] = self.bus.read32(address);
+                    } else {
+                        self.bus.write32(address, self.regs[r]);
+                    }
+                } else {
+                    if L {
+                        self.regs[r] = self.bus.read32(address);
+                    } else {
+                        self.bus.write32(address, self.regs[r]);
+                    }
+
+                    address = if U { address + 1 } else { address - 1 };
+                }
+
+                if W {
+                    self.regs[rn] = address;
+                }
+            }
         }
     }
 

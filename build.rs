@@ -54,6 +54,17 @@ fn decode(index: u16) -> String {
             "Arm7TDMI::hw_signed_data_transfer::<true, {}, {}, {}, {}, {}, {}>",
             p_bit, u_bit, w_bit, l_bit, s_bit, h_bit
         )
+    } else if index & 0b1110_0000_0000 == 0b1000_0000_0000 {
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let s_bit = index & (1 << 6) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+
+        format!(
+            "Arm7TDMI::block_data_transfer::<{}, {}, {}, {}, {}>",
+            p_bit, u_bit, s_bit, w_bit, l_bit
+        )
     } else if index & 0b1100_0000_0000 == 0b0000_0000_0000 {
         let imm = index & (1 << 9) != 0;
         let s_bit = index & (1 << 4) != 0;
