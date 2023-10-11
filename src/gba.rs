@@ -22,7 +22,11 @@ impl Gba {
 
     pub fn run(&mut self) {
         self.cpu.cycle();
-        self.cpu.bus.io.ppu.cycle();
+        self.cpu
+            .bus
+            .io
+            .ppu
+            .cycle(&*self.cpu.bus.vram, &self.cpu.bus.palette_ram);
 
         self.cycles += 1;
     }

@@ -124,7 +124,7 @@ impl Arm7TDMI {
         } else {
             let rm = self.regs[op as usize & 0xF];
             let shift_type = (op & 0x0060) >> 5;
-            let amount = if op & (1 << 3) != 0 {
+            let amount = if op & (1 << 4) != 0 {
                 self.regs[(op as usize & 0x0F00) >> 8]
             } else {
                 (op as u32 & 0x0F80) >> 7
@@ -316,13 +316,12 @@ impl Arm7TDMI {
             ioffset & 0x00FF_FFFF
         } as i32;
 
-        // TODO: r15 offset adjustment
+        // TODO: r15 offset adjustment (+4 in cycle or here???)
         if link {
-            self.regs[14] = self.regs[15] + 4;
+            self.regs[14] = self.regs[15];
         }
 
         self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 8 - 4);
-        // println!("{:#X}", self.regs[15]);
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.

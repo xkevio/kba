@@ -49,37 +49,15 @@ fn main() -> SdlResult<()> {
         }
 
         // Update frame and treat everything as BG Mode 3 or 4 for now.
-        let bg_mode = kba.cpu.bus.io.ppu.dispcnt.bg_mode();
-        if bg_mode == 3 {
-            texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-                for (i, px) in kba.cpu.bus.vram[..76_800].chunks(2).enumerate() {
-                    let color555 = u16::from_be_bytes([px[1], px[0]]);
-                    let [r, g, b, a] = rgb555_to_color(color555).to_be_bytes();
-
-                    buffer[i * 4] = r;
-                    buffer[i * 4 + 1] = g;
-                    buffer[i * 4 + 2] = b;
-                    buffer[i * 4 + 3] = a;
-                }
-            })?;
-        }
-
-        if bg_mode == 4 {
-            texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-                for (i, px) in kba.cpu.bus.vram[..38_400].iter().enumerate() {
-                    let c = kba.cpu.bus.palette_ram[*px as usize];
-                    let c1 = kba.cpu.bus.palette_ram[(*px + 1) as usize];
-
-                    let color555 = u16::from_be_bytes([c1, c]);
-                    let [r, g, b, a] = rgb555_to_color(color555).to_be_bytes();
-
-                    buffer[i * 4] = r;
-                    buffer[i * 4 + 1] = g;
-                    buffer[i * 4 + 2] = b;
-                    buffer[i * 4 + 3] = a;
-                }
-            })?;
-        }
+        texture.with_lock(None, |buffer: &mut [u8], _: usize| {
+            for (i, px) in kba.cpu.bus.io.ppu.buffer.iter().enumerate() {
+                let [r, g, b, a] = rgb555_to_color(*px).to_be_bytes();
+                buffer[i * 4] = r;
+                buffer[i * 4 + 1] = g;
+                buffer[i * 4 + 2] = b;
+                buffer[i * 4 + 3] = a;
+            }
+        })?;
 
         kba.cycles = 0;
 
