@@ -85,10 +85,18 @@ impl Arm7TDMI {
     // TODO.
     pub fn setup_registers() -> Self {
         let mut regs = [0; 16];
-        regs[15] = 0x0800_0000;
+
+        // temp crt0 skip
+        regs[2] = 0x0200_0000;
+        regs[3] = 0x0800_02D8;
+        regs[4] = 0x0200_0000;
+        regs[13] = 0x0300_7F00;
+        regs[14] = 0x0800_0187;
+        regs[15] = 0x0800_02D8;
 
         Self {
             regs,
+            cpsr: Cpsr(0x6000_001F),
             ..Default::default()
         }
     }
@@ -100,7 +108,7 @@ impl Arm7TDMI {
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         if self.cond(cond as u8) {
-            // println!("{:X?}\n", self.regs);
+            println!("{:X?}\n", self.regs);
             match self.cpsr.state() {
                 State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
                 State::Thumb => todo!(),
@@ -396,7 +404,8 @@ impl Arm7TDMI {
             self.regs[rn] - offset
         };
 
-        let address = if P { base_with_offset } else { self.regs[rn] };
+        let mut address = if P { base_with_offset } else { self.regs[rn] };
+        if rn == 15 { address += 8 };
 
         // Load from memory if L, else store register into memory.
         if L {

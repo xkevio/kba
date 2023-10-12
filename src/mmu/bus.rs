@@ -38,7 +38,7 @@ impl Mcu for Bus {
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000],
             0x0800_0000..=0x0DFF_FFFF => self.game_pak.read8(address - 0x0800_0000),
             // TODO: sram
-            _ => unreachable!(),
+            _ => unreachable!("{}", format!("{address:X?}")),
         }
     }
 
