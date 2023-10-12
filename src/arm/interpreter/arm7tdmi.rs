@@ -83,16 +83,21 @@ impl From<State> for bool {
 
 impl Arm7TDMI {
     // TODO.
-    pub fn setup_registers() -> Self {
+    pub fn setup_registers(skip_crt0: bool) -> Self {
         let mut regs = [0; 16];
 
         // temp crt0 skip
-        regs[2] = 0x0200_0000;
-        regs[3] = 0x0800_02D8;
-        regs[4] = 0x0200_0000;
-        regs[13] = 0x0300_7F00;
-        regs[14] = 0x0800_0187;
-        regs[15] = 0x0800_02D8;
+        if skip_crt0 {
+            regs[2] = 0x0200_0000;
+            regs[3] = 0x0800_02D8;
+            regs[4] = 0x0200_0000;
+            regs[13] = 0x0300_7F00;
+            regs[14] = 0x0800_0187;
+            regs[15] = 0x0800_02D8;
+        } else {
+            regs[13] = 0x0300_7F00;
+            regs[15] = 0x0800_0000;
+        }
 
         Self {
             regs,
@@ -108,14 +113,11 @@ impl Arm7TDMI {
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         if self.cond(cond as u8) {
-            println!("{:X?}\n", self.regs);
+            // println!("{:X?}\n", self.regs);
             match self.cpsr.state() {
                 State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
                 State::Thumb => todo!(),
             }
-
-            // println!("{:#X}", opcode);
-            // println!("Z: {}", self.cpsr.z());
         }
 
         self.regs[15] += 4;
@@ -223,8 +225,13 @@ impl Arm7TDMI {
             }
         }
 
+        // FIXME: temporary check for mov r15, r1.
         if !is_intmd {
-            self.regs[rd] = result;
+            self.regs[rd] = if rd == 15 && (opcode & 0xF) == 1 {
+                result - 4
+            } else {
+                result
+            };
         }
     }
 
@@ -329,7 +336,7 @@ impl Arm7TDMI {
             self.regs[14] = self.regs[15];
         }
 
-        self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 8 - 4);
+        self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 4);
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
@@ -405,6 +412,7 @@ impl Arm7TDMI {
         };
 
         let mut address = if P { base_with_offset } else { self.regs[rn] };
+        #[rustfmt::skip]
         if rn == 15 { address += 8 };
 
         // Load from memory if L, else store register into memory.
@@ -484,7 +492,7 @@ impl Arm7TDMI {
         }
     }
 
-    /// LDM/STM
+    /// LDM/STM (todo: psr bit)
     pub fn block_data_transfer<
         const P: bool,
         const U: bool,
@@ -496,40 +504,43 @@ impl Arm7TDMI {
         opcode: u32,
     ) {
         let rn = (opcode as usize & 0x000F_0000) >> 16;
-        let reg_list = (0..16)
-            .map(|i| (opcode as u16) & (1 << i) != 0)
+        let mut reg_list = (0..16)
+            .filter(|i| (opcode as u16) & (1 << i) != 0)
             .collect::<Vec<_>>();
 
         let mut address = self.regs[rn];
+        if !U {
+            reg_list.reverse();
+        }
 
-        for (r, rb) in reg_list.iter().enumerate() {
-            if *rb {
-                if P {
-                    address = if U { address + 1 } else { address - 1 };
+        for r in reg_list {
+            if P {
+                // Pre-{inc, dec}rement addressing.
+                address = if U { address + 4 } else { address - 4 };
 
-                    if L {
-                        self.regs[r] = self.bus.read32(address);
-                    } else {
-                        self.bus.write32(address, self.regs[r]);
-                    }
+                if L {
+                    self.regs[r] = self.bus.read32(address);
                 } else {
-                    if L {
-                        self.regs[r] = self.bus.read32(address);
-                    } else {
-                        self.bus.write32(address, self.regs[r]);
-                    }
-
-                    address = if U { address + 1 } else { address - 1 };
+                    self.bus.write32(address, self.regs[r]);
+                }
+            } else {
+                if L {
+                    self.regs[r] = self.bus.read32(address);
+                } else {
+                    self.bus.write32(address, self.regs[r]);
                 }
 
-                if W || !P {
-                    self.regs[rn] = address;
-                }
+                // Post-{inc, dec}rement addressing.
+                address = if U { address + 4 } else { address - 4 };
             }
+        }
+
+        if W || !P {
+            self.regs[rn] = address;
         }
     }
 
-    // Test for LUT. (todo: LDM/STM)
+    // Test for LUT.
     pub fn dummy(&mut self, _opcode: u32) {
         panic!("shouldn't be called!")
     }

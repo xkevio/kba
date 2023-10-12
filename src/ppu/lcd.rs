@@ -85,7 +85,6 @@ impl Ppu {
 
     /// Render one scanline fully.
     fn scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
-        // println!("{:?}", palette_ram);
         match self.dispcnt.bg_mode() {
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;

@@ -11,7 +11,7 @@ impl Mcu for Io {
     fn read8(&mut self, address: u32) -> u8 {
         match address {
             0x0000..=0x0006 => self.ppu.read8(address),
-            _ => 0,
+            _ => 0xFF,
         }
     }
 
