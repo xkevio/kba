@@ -16,11 +16,11 @@ impl Default for Bus {
     fn default() -> Self {
         Self {
             bios: include_bytes!("gba_bios.bin"),
-            wram: box_arr!(0xFF; 0x48000),
+            wram: box_arr!(0x00; 0x48000),
             io: Io::default(),
-            palette_ram: [0xFF; 0x400],
-            vram: box_arr!(0xFF; 0x18000),
-            oam: [0xFF; 0x400],
+            palette_ram: [0x00; 0x400],
+            vram: box_arr!(0x00; 0x18000),
+            oam: [0x00; 0x400],
             game_pak: GamePak::default(),
         }
     }

@@ -38,19 +38,14 @@ impl Ppu {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    if self.vcount.ly() >= 160 {
-                        self.dispstat.set_vblank(true);
-                        self.current_mode = Mode::VBlank;
-                    } else {
-                        self.scanline(vram, palette_ram);
-                        self.dispstat.set_hblank(true);
-                        self.current_mode = Mode::HBlank;
-                    }
+                    self.scanline(vram, palette_ram);
+                    self.dispstat.set_hblank(true);
+                    self.current_mode = Mode::HBlank;
                 }
             }
             Mode::HBlank => {
                 if self.cycle > TOTAL_LEN {
-                    self.vcount.set_ly((self.vcount.ly() + 1) % 228);
+                    self.vcount.set_ly(self.vcount.ly() + 1);
                     self.dispstat
                         .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
                     self.dispstat.set_hblank(false);
@@ -66,14 +61,19 @@ impl Ppu {
                 }
             }
             Mode::VBlank => {
+                // HBlank in DIPSTAT still gets set during VBlank.
+                if self.cycle > HDRAW_LEN {
+                    self.dispstat.set_hblank(true);
+                }
+
                 if self.cycle > TOTAL_LEN {
                     self.cycle = 0;
                     self.vcount.set_ly(self.vcount.ly() + 1);
+                    self.dispstat.set_hblank(false);
 
                     if self.vcount.ly() == TOTAL_LINES {
-                        self.dispstat.set_vblank(false);
-
                         self.vcount.set_ly(0);
+                        self.dispstat.set_vblank(false);
                         self.current_mode = Mode::HDraw;
                     }
                 }
@@ -100,8 +100,8 @@ impl Ppu {
                 let line = &vram[start..(start + LCD_WIDTH)];
 
                 for (i, px) in line.iter().enumerate() {
-                    let c0 = palette_ram[*px as usize];
-                    let c1 = palette_ram[*px as usize + 1];
+                    let c0 = palette_ram[*px as usize * 2];
+                    let c1 = palette_ram[*px as usize * 2 + 1];
 
                     self.buffer[start + i] = u16::from_be_bytes([c1, c0]);
                 }
