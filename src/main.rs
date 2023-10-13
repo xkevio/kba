@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use gba::{Gba, LCD_HEIGHT, LCD_WIDTH};
-use sdl2::{event::Event, pixels::PixelFormatEnum};
+use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
 
 mod arm;
 mod gba;
@@ -39,6 +39,14 @@ fn main() -> SdlResult<()> {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
+                Event::KeyDown { keycode, .. } => match keycode {
+                    Some(Keycode::Return) => kba.cpu.bus.io.key_input.set_start(false),
+                    Some(Keycode::Tab) => kba.cpu.bus.io.key_input.set_select(false),
+                    Some(Keycode::Up) => kba.cpu.bus.io.key_input.set_up(false),
+                    Some(Keycode::Down) => kba.cpu.bus.io.key_input.set_down(false),
+                    Some(_) => {}
+                    None => unreachable!(),
+                },
                 _ => {}
             }
         }
@@ -60,6 +68,7 @@ fn main() -> SdlResult<()> {
         })?;
 
         kba.cycles = 0;
+        kba.cpu.bus.io.key_input.set_keyinput(0xFF);
 
         canvas.clear();
         canvas.copy(&texture, None, None)?;
