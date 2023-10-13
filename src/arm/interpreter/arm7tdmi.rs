@@ -132,9 +132,15 @@ impl Arm7TDMI {
                 false,
             )
         } else {
-            let rm = self.regs[op as usize & 0xF];
+            let mut rm = if (op as usize & 0xF) == 15 {
+                self.regs[op as usize & 0xF] + 8
+            } else {
+                self.regs[op as usize & 0xF]
+            };
+
             let shift_type = (op & 0x0060) >> 5;
             let amount = if op & (1 << 4) != 0 {
+                if (op as usize & 0xF) == 15 { rm += 4 };
                 self.regs[(op as usize & 0x0F00) >> 8]
             } else {
                 (op as u32 & 0x0F80) >> 7
@@ -180,23 +186,31 @@ impl Arm7TDMI {
         let operation = (opcode & 0x01E0_0000) >> 21;
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
+        let mut alu_carry = false;
 
         #[rustfmt::skip]
         let result = match operation {
             0b0000 => rn & op2,
             0b0001 => rn ^ op2,
-            0b0010 => ov!(rn.overflowing_sub(op2), opcode, self),
-            0b0011 => ov!(op2.overflowing_sub(rn), opcode, self),
-            0b0100 => ov!(rn.overflowing_add(op2), opcode, self),
-            0b0101 => ov!(rn.overflowing_add(op2 + self.cpsr.c() as u32), opcode, self),
-            0b0110 => ov!(rn.overflowing_sub(op2 + self.cpsr.c() as u32 - 1), opcode, self),
-            0b0111 => ov!(op2.overflowing_sub(rn + self.cpsr.c() as u32 - 1), opcode, self),
+            0b0010 => ov!(rn.overflowing_sub(op2), alu_carry),
+            0b0011 => ov!(op2.overflowing_sub(rn), alu_carry),
+            0b0100 => ov!(rn.overflowing_add(op2), alu_carry),
+            0b0101 => ov!(rn.overflowing_add(op2 + self.cpsr.c() as u32), alu_carry),
+            0b0110 => ov!(rn.overflowing_sub(op2 + self.cpsr.c() as u32 - 1), alu_carry),
+            0b0111 => ov!(op2.overflowing_sub(rn + self.cpsr.c() as u32 - 1), alu_carry),
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
-            0b1010 => {is_intmd = true; ov!((rn as i32).overflowing_sub(op2 as i32), opcode, self)},
-            0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), opcode, self)},
+            0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), alu_carry)},
+            0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
             0b1100 => rn | op2,
-            0b1101 => op2,
+            0b1101 => {
+                if opcode & 0xFFF == 15 {
+                    println!("{:X?}", opcode);
+                    println!("rd: {rd} gets {}", op2);
+                    println!("r2: {}", self.regs[2]);
+                }
+                op2
+            },
             0b1110 => rn & !(op2),
             0b1111 => !op2,
             _ => unreachable!()
@@ -212,15 +226,20 @@ impl Arm7TDMI {
                 // Set N flag to bit 31 of result.
                 self.cpsr.set_n(result & (1 << 31) != 0);
 
-                // Logical operations set Carry from barrel shifter.
+                // Logical operations set Carry from barrel shifter and leave V unaffected.
                 if matches!(
                     operation,
                     0b0000 | 0b0001 | 0b1000 | 0b1001 | 0b1100 | 0b1101 | 0b1110 | 0b1111
                 ) {
                     self.cpsr.set_c(carry_out);
                 } else {
-                    // TODO: set c to carry out of bit31 in ALU.
-                    // TODO: switch ov check and carry check.
+                    // Set C to carry out of bit31 in ALU.
+                    self.cpsr.set_c(alu_carry);
+                    // Set (signed) overflow -- check sign bits of operands and result.
+                    self.cpsr.set_v(
+                        (((rn >> 31) != 0) == ((op2 >> 31) != 0))
+                            && (((rn >> 31) != 0) != ((result >> 31) != 0)),
+                    );
                 }
             }
         }
@@ -562,20 +581,20 @@ impl Arm7TDMI {
     /// Logical shift left, returns result and carry out.
     #[inline(always)]
     fn lsl(&self, rm: u32, amount: u32) -> (u32, bool) {
-        (rm << amount, rm & (32 - amount) != 0)
+        (rm << amount, rm & (1 << (32 - amount + 1)) != 0)
     }
 
     /// Logical shift right, returns result and carry out.
     #[inline(always)]
     fn lsr(&self, rm: u32, amount: u32) -> (u32, bool) {
-        (rm >> amount, rm & amount != 0)
+        (rm >> amount, rm & (1 << (amount - 1)) != 0)
     }
 
     /// Arithmetic shift right, returns result and carry out.
     #[inline(always)]
     fn asr(&self, rm: u32, amount: u32) -> (u32, bool) {
         let bit31 = rm & (1 << 31);
-        let carry = rm & amount != 0;
+        let carry = rm & (1 << (amount - 1)) != 0;
 
         let mut rm = rm >> amount;
         for i in 0..amount {
@@ -588,6 +607,6 @@ impl Arm7TDMI {
     /// Rotate right, returns result and carry out.
     #[inline(always)]
     fn ror(&self, rm: u32, amount: u32) -> (u32, bool) {
-        (rm.rotate_right(amount), rm & amount != 0)
+        (rm.rotate_right(amount), rm & (1 << (amount - 1)) != 0)
     }
 }

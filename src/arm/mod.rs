@@ -3,14 +3,9 @@ pub mod interpreter;
 /// Set V (overflow) flag and save repetition.
 #[macro_export]
 macro_rules! ov {
-    ($res:expr, $opcode:expr, $self:ident) => {{
+    ($res:expr, $c:ident) => {{
         let (res, ov) = $res;
-
-        // If S-bit is set and if rd != r15.
-        if S && (($opcode as usize & 0xF000) >> 12) != 15 {
-            $self.cpsr.set_v(ov);
-        }
-
-        res as u32
+        $c = ov;
+        res
     }};
 }
