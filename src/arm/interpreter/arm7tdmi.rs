@@ -113,7 +113,7 @@ impl Arm7TDMI {
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         if self.cond(cond as u8) {
-            // println!("{:X?}\n", self.regs);
+            println!("{:X?}\n", self.regs);
             match self.cpsr.state() {
                 State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
                 State::Thumb => todo!(),
@@ -204,7 +204,7 @@ impl Arm7TDMI {
             0b1001 => {is_intmd = true; rn ^ op2},
             0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), alu_carry)},
             0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
-            0b1100 => rn | op2,
+            0b1100 => {println!("ORR"); rn | op2},
             0b1101 => op2,
             0b1110 => rn & !(op2),
             0b1111 => !op2,
@@ -638,8 +638,12 @@ impl Arm7TDMI {
     /// Rotate right, returns result and carry out.
     #[inline(always)]
     fn ror(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
-        if reg && amount == 0 {
-            return (rm, self.cpsr.c());
+        if amount == 0 {
+            if reg {
+                return (rm, self.cpsr.c());
+            } else {
+                return ((self.cpsr.c() as u32) << 31 | (rm >> 1), (rm & 1) != 0);
+            }
         }
 
         (rm.rotate_right(amount), rm & (1 << (amount - 1)) != 0)
