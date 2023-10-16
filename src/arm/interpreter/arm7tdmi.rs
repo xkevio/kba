@@ -196,8 +196,8 @@ impl Arm7TDMI {
         let result = match operation {
             0b0000 => rn & op2,
             0b0001 => rn ^ op2,
-            0b0010 => ov!(rn.overflowing_sub(op2), alu_carry),
-            0b0011 => ov!(op2.overflowing_sub(rn), alu_carry),
+            0b0010 => {alu_carry = rn >= op2; rn - op2},
+            0b0011 => {alu_carry = op2 >= rn; op2 - rn},
             0b0100 => ov!(rn.overflowing_add(op2), alu_carry),
             0b0101 => ov!(rn.overflowing_add(op2 + self.cpsr.c() as u32), alu_carry),
             0b0110 => {
@@ -212,7 +212,7 @@ impl Arm7TDMI {
             },
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
-            0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), alu_carry)},
+            0b1010 => {is_intmd = true; alu_carry = rn >= op2; rn - op2},
             0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
             0b1100 => rn | op2,
             0b1101 => op2,
@@ -249,9 +249,9 @@ impl Arm7TDMI {
             }
         }
 
-        // FIXME: temporary check for mov r15, r1.
+        // FIXME: temporary check for mov r15, r1-r13.
         if !is_intmd {
-            self.regs[rd] = if rd == 15 && (opcode & 0xF) == 1 {
+            self.regs[rd] = if rd == 15 && (opcode & 0xF) != 14 {
                 result - 4
             } else {
                 result
@@ -306,7 +306,7 @@ impl Arm7TDMI {
         }
     }
 
-    /// Single Data Swap (SWP). todo: bus parameter change.
+    /// Single Data Swap (SWP).
     pub fn swap<const B: bool>(&mut self, opcode: u32) {
         let rd = (opcode as usize & 0xF000) >> 12;
         let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
@@ -314,9 +314,15 @@ impl Arm7TDMI {
 
         match B {
             false => {
-                let swp_content = self.bus.read32(rn);
+                let (aligned_address, data_ror) = if rn % 4 != 0 {
+                    (rn & !3, (rn & 3) * 8)
+                } else {
+                    (rn, 0)
+                };
+
+                let swp_content = self.bus.read32(aligned_address);
                 self.bus.write32(rn, rm);
-                self.regs[rd] = swp_content;
+                self.regs[rd] = swp_content.rotate_right(data_ror);
             }
             true => {
                 let swp_content = self.bus.read8(rn);
@@ -437,18 +443,31 @@ impl Arm7TDMI {
 
         // Load from memory if L, else store register into memory.
         if L {
-            let val = if B {
-                self.bus.read8(address) as u32
+            // Force align address.
+            let (aligned_address, data_ror) = if !B && address % 4 != 0 {
+                (address & !3, (address & 3) * 8)
             } else {
-                self.bus.read32(address)
+                (address, 0)
             };
 
-            self.regs[rd] = val;
-        } else {
-            if B {
-                self.bus.write8(address, self.regs[rd] as u8);
+            let val = if B {
+                self.bus.read8(aligned_address) as u32
             } else {
-                self.bus.write32(address, self.regs[rd]);
+                self.bus.read32(aligned_address)
+            };
+
+            self.regs[rd] = val.rotate_right(data_ror);
+        } else {
+            let aligned_address = if !B && address % 4 != 0 {
+                address & !3
+            } else {
+                address
+            };
+
+            if B {
+                self.bus.write8(aligned_address, self.regs[rd] as u8);
+            } else {
+                self.bus.write32(aligned_address, self.regs[rd]);
             }
         }
 
@@ -473,7 +492,7 @@ impl Arm7TDMI {
         let rn = (opcode as usize & 0x000F_0000) >> 16;
         let rd = (opcode as usize & 0xF000) >> 12;
         let offset = if I {
-            opcode & 0xF
+            ((opcode & 0xF00) >> 4) | (opcode & 0xF)
         } else {
             self.regs[opcode as usize & 0xF]
         };
@@ -533,21 +552,21 @@ impl Arm7TDMI {
             reg_list.reverse();
         }
 
-        for r in reg_list {
+        for r in &reg_list {
             if P {
                 // Pre-{inc, dec}rement addressing.
                 address = if U { address + 4 } else { address - 4 };
 
                 if L {
-                    self.regs[r] = self.bus.read32(address);
+                    self.regs[*r] = self.bus.read32(address);
                 } else {
-                    self.bus.write32(address, self.regs[r]);
+                    self.bus.write32(address, self.regs[*r]);
                 }
             } else {
                 if L {
-                    self.regs[r] = self.bus.read32(address);
+                    self.regs[*r] = self.bus.read32(address);
                 } else {
-                    self.bus.write32(address, self.regs[r]);
+                    self.bus.write32(address, self.regs[*r]);
                 }
 
                 // Post-{inc, dec}rement addressing.
@@ -555,6 +574,7 @@ impl Arm7TDMI {
             }
         }
 
+        // TODO: check for base register in register list
         if W || !P {
             self.regs[rn] = address;
         }

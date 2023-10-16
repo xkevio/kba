@@ -40,10 +40,15 @@ fn main() -> SdlResult<()> {
             match event {
                 Event::Quit { .. } => break 'main,
                 Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Return) => kba.cpu.bus.io.key_input.set_start(false),
+                    Some(Keycode::Return) => {
+                        println!("ENTER");
+                        kba.cpu.bus.io.key_input.set_start(false)
+                    }
                     Some(Keycode::Tab) => kba.cpu.bus.io.key_input.set_select(false),
                     Some(Keycode::Up) => kba.cpu.bus.io.key_input.set_up(false),
                     Some(Keycode::Down) => kba.cpu.bus.io.key_input.set_down(false),
+                    Some(Keycode::Right) => kba.cpu.bus.io.key_input.set_right(false),
+                    Some(Keycode::Left) => kba.cpu.bus.io.key_input.set_left(false),
                     Some(_) => {}
                     None => unreachable!(),
                 },
@@ -68,7 +73,7 @@ fn main() -> SdlResult<()> {
         })?;
 
         kba.cycles = 0;
-        kba.cpu.bus.io.key_input.set_keyinput(0xFF);
+        kba.cpu.bus.io.key_input.set_keyinput(0xFFFF);
 
         canvas.clear();
         canvas.copy(&texture, None, None)?;
