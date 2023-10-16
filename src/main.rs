@@ -40,10 +40,7 @@ fn main() -> SdlResult<()> {
             match event {
                 Event::Quit { .. } => break 'main,
                 Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Return) => {
-                        println!("ENTER");
-                        kba.cpu.bus.io.key_input.set_start(false)
-                    }
+                    Some(Keycode::Return) => kba.cpu.bus.io.key_input.set_start(false),
                     Some(Keycode::Tab) => kba.cpu.bus.io.key_input.set_select(false),
                     Some(Keycode::Up) => kba.cpu.bus.io.key_input.set_up(false),
                     Some(Keycode::Down) => kba.cpu.bus.io.key_input.set_down(false),

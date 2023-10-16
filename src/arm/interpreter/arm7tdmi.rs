@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{mmu::bus::Bus, mmu::Mcu, ov};
+use crate::{fl, mmu::bus::Bus, mmu::Mcu};
 use proc_bitfield::{bitfield, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
@@ -190,30 +190,21 @@ impl Arm7TDMI {
         let operation = (opcode & 0x01E0_0000) >> 21;
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
-        let mut alu_carry = false;
 
         #[rustfmt::skip]
         let result = match operation {
             0b0000 => rn & op2,
             0b0001 => rn ^ op2,
-            0b0010 => {alu_carry = rn >= op2; rn - op2},
-            0b0011 => {alu_carry = op2 >= rn; op2 - rn},
-            0b0100 => ov!(rn.overflowing_add(op2), alu_carry),
-            0b0101 => ov!(rn.overflowing_add(op2 + self.cpsr.c() as u32), alu_carry),
-            0b0110 => {
-                // carry = NOT borrow on ARM
-                alu_carry = rn >= (op2 + self.cpsr.c() as u32 - 1);
-                rn - op2 + self.cpsr.c() as u32 - 1
-            },
-            0b0111 => {
-                // carry = NOT borrow on ARM
-                alu_carry = op2 >= (rn + self.cpsr.c() as u32 - 1);
-                op2 - rn + self.cpsr.c() as u32 - 1
-            },
+            0b0010 => fl!(rn, op2, -, self, cpsr),
+            0b0011 => fl!(op2, rn, -, self, cpsr),
+            0b0100 => fl!(rn, op2, +, self, cpsr),
+            0b0101 => fl!(rn, op2 + self.cpsr.c() as u32, +, self, cpsr),
+            0b0110 => fl!(rn, op2, self.cpsr.c() as u32 - 1, -, self, cpsr),
+            0b0111 => fl!(op2, rn, self.cpsr.c() as u32 - 1, -, self, cpsr),
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
-            0b1010 => {is_intmd = true; alu_carry = rn >= op2; rn - op2},
-            0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
+            0b1010 => {is_intmd = true; fl!(rn, op2, -, self, cpsr)},
+            0b1011 => {is_intmd = true; fl!(rn, op2, +, self, cpsr)},
             0b1100 => rn | op2,
             0b1101 => op2,
             0b1110 => rn & !(op2),
@@ -232,19 +223,12 @@ impl Arm7TDMI {
                 self.cpsr.set_n(result & (1 << 31) != 0);
 
                 // Logical operations set Carry from barrel shifter and leave V unaffected.
+                // Arithmetic operations handle their flags in the fl! macro.
                 if matches!(
                     operation,
                     0b0000 | 0b0001 | 0b1000 | 0b1001 | 0b1100 | 0b1101 | 0b1110 | 0b1111
                 ) {
                     self.cpsr.set_c(carry_out);
-                } else {
-                    // Set C to carry out of bit31 in ALU.
-                    self.cpsr.set_c(alu_carry);
-                    // Set (signed) overflow -- check sign bits of operands and result.
-                    self.cpsr.set_v(
-                        (((rn >> 31) != 0) == ((op2 >> 31) != 0))
-                            && (((rn >> 31) != 0) != ((result >> 31) != 0)),
-                    );
                 }
             }
         }
