@@ -113,7 +113,7 @@ impl Arm7TDMI {
         let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
         if self.cond(cond as u8) {
-            println!("{:X?}\n", self.regs);
+            // println!("{:X?}\n", self.regs);
             match self.cpsr.state() {
                 State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
                 State::Thumb => todo!(),
@@ -148,6 +148,8 @@ impl Arm7TDMI {
                 (op as u32 & 0x0F80) >> 7
             };
 
+            // `reg` parameter as there is different behavior depending on
+            // if the amount is an immediate or register-specified.
             match shift_type {
                 0b00 => self.lsl(rm, amount, op & (1 << 4) != 0),
                 0b01 => self.lsr(rm, amount, op & (1 << 4) != 0),
@@ -198,13 +200,21 @@ impl Arm7TDMI {
             0b0011 => ov!(op2.overflowing_sub(rn), alu_carry),
             0b0100 => ov!(rn.overflowing_add(op2), alu_carry),
             0b0101 => ov!(rn.overflowing_add(op2 + self.cpsr.c() as u32), alu_carry),
-            0b0110 => ov!(rn.overflowing_sub(op2 + self.cpsr.c() as u32 - 1), alu_carry),
-            0b0111 => ov!(op2.overflowing_sub(rn + self.cpsr.c() as u32 - 1), alu_carry),
+            0b0110 => {
+                // carry = NOT borrow on ARM
+                alu_carry = rn >= (op2 + self.cpsr.c() as u32 - 1);
+                rn - op2 + self.cpsr.c() as u32 - 1
+            },
+            0b0111 => {
+                // carry = NOT borrow on ARM
+                alu_carry = op2 >= (rn + self.cpsr.c() as u32 - 1);
+                op2 - rn + self.cpsr.c() as u32 - 1
+            },
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
             0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), alu_carry)},
             0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
-            0b1100 => {println!("ORR"); rn | op2},
+            0b1100 => rn | op2,
             0b1101 => op2,
             0b1110 => rn & !(op2),
             0b1111 => !op2,
@@ -265,9 +275,7 @@ impl Arm7TDMI {
 
         if S {
             self.cpsr.set_n(self.regs[rd] & (1 << 31) != 0);
-            if self.regs[rd] == 0 {
-                self.cpsr.set_z(true)
-            };
+            self.cpsr.set_z(self.regs[rd] == 0)
         }
     }
 
@@ -294,9 +302,7 @@ impl Arm7TDMI {
 
         if S {
             self.cpsr.set_n(res & (1 << 63) != 0);
-            if res == 0 {
-                self.cpsr.set_z(true)
-            };
+            self.cpsr.set_z(res == 0)
         }
     }
 
