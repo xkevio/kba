@@ -140,17 +140,19 @@ impl Arm7TDMI {
 
             let shift_type = (op & 0x0060) >> 5;
             let amount = if op & (1 << 4) != 0 {
-                if (op as usize & 0xF) == 15 { rm += 4 };
-                self.regs[(op as usize & 0x0F00) >> 8]
+                if (op as usize & 0xF) == 15 {
+                    rm += 4
+                };
+                self.regs[(op as usize & 0x0F00) >> 8] & 0xFF
             } else {
                 (op as u32 & 0x0F80) >> 7
             };
 
             match shift_type {
-                0b00 => self.lsl(rm, amount),
-                0b01 => self.lsr(rm, amount),
-                0b10 => self.asr(rm, amount),
-                0b11 => self.ror(rm, amount),
+                0b00 => self.lsl(rm, amount, op & (1 << 4) != 0),
+                0b01 => self.lsr(rm, amount, op & (1 << 4) != 0),
+                0b10 => self.asr(rm, amount, op & (1 << 4) != 0),
+                0b11 => self.ror(rm, amount, op & (1 << 4) != 0),
                 _ => unreachable!(),
             }
         }
@@ -203,14 +205,7 @@ impl Arm7TDMI {
             0b1010 => {is_intmd = true; ov!(rn.overflowing_sub(op2), alu_carry)},
             0b1011 => {is_intmd = true; ov!(rn.overflowing_add(op2), alu_carry)},
             0b1100 => rn | op2,
-            0b1101 => {
-                if opcode & 0xFFF == 15 {
-                    println!("{:X?}", opcode);
-                    println!("rd: {rd} gets {}", op2);
-                    println!("r2: {}", self.regs[2]);
-                }
-                op2
-            },
+            0b1101 => op2,
             0b1110 => rn & !(op2),
             0b1111 => !op2,
             _ => unreachable!()
@@ -580,19 +575,51 @@ impl Arm7TDMI {
 
     /// Logical shift left, returns result and carry out.
     #[inline(always)]
-    fn lsl(&self, rm: u32, amount: u32) -> (u32, bool) {
-        (rm << amount, rm & (1 << (32 - amount + 1)) != 0)
+    fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+        match reg {
+            false => (rm << amount, rm & (1 << (32 - amount + 1)) != 0),
+            true => {
+                if amount == 0 {
+                    (rm, self.cpsr.c())
+                } else if amount < 32 {
+                    (rm << amount, rm & (1 << (32 - amount + 1)) != 0)
+                } else {
+                    (0, (rm & 1) != 0)
+                }
+            }
+        }
     }
 
     /// Logical shift right, returns result and carry out.
     #[inline(always)]
-    fn lsr(&self, rm: u32, amount: u32) -> (u32, bool) {
-        (rm >> amount, rm & (1 << (amount - 1)) != 0)
+    fn lsr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+        match reg {
+            false => {
+                if amount == 0 {
+                    (0, rm & (1 << 31) != 0)
+                } else {
+                    (rm >> amount, rm & (1 << (amount - 1)) != 0)
+                }
+            }
+            true => {
+                if amount == 0 {
+                    (rm, self.cpsr.c())
+                } else if amount < 32 {
+                    (rm >> amount, rm & (1 << (amount - 1)) != 0)
+                } else {
+                    (0, false)
+                }
+            }
+        }
     }
 
     /// Arithmetic shift right, returns result and carry out.
     #[inline(always)]
-    fn asr(&self, rm: u32, amount: u32) -> (u32, bool) {
+    fn asr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+        if reg && amount == 0 {
+            return (rm, self.cpsr.c());
+        }
+
         let bit31 = rm & (1 << 31);
         let carry = rm & (1 << (amount - 1)) != 0;
 
@@ -601,12 +628,20 @@ impl Arm7TDMI {
             rm |= bit31 >> i;
         }
 
-        (rm, carry)
+        if amount == 0 || amount >= 32 {
+            ((bit31 >> 31) * 0xFFFF_FFFF, bit31 != 0)
+        } else {
+            (rm, carry)
+        }
     }
 
     /// Rotate right, returns result and carry out.
     #[inline(always)]
-    fn ror(&self, rm: u32, amount: u32) -> (u32, bool) {
+    fn ror(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+        if reg && amount == 0 {
+            return (rm, self.cpsr.c());
+        }
+
         (rm.rotate_right(amount), rm & (1 << (amount - 1)) != 0)
     }
 }
