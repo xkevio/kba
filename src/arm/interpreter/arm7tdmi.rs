@@ -515,11 +515,11 @@ impl Arm7TDMI {
                 self.regs[rd] = match H {
                     false => {
                         let sb = self.bus.read8(address);
-                        sb as i32 as u32
+                        sb as i8 as u32
                     }
                     true => {
                         let shw = self.bus.read16(address);
-                        shw as i32 as u32
+                        shw as i16 as u32
                     }
                 }
             }
@@ -528,7 +528,7 @@ impl Arm7TDMI {
             self.bus.write16(address, self.regs[rd] as u16);
         }
 
-        if W || !P {
+        if (W || !P) && (rn != rd) {
             self.regs[rn] = base_with_offset;
         }
     }
