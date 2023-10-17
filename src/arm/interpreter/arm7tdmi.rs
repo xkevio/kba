@@ -369,14 +369,12 @@ impl Arm7TDMI {
                 return;
             };
 
-            println!("Current mode: {:?}", self.cpsr.mode().unwrap());
-            println!("MSR complete with r{} = {:X}", opcode as usize & 0xF, rm);
-
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
                 source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
             } else {
                 source_psr.set_cpsr(rm);
 
+                // TODO: make generic
                 if opcode & (1 << 22) != 0 {
                     self.spsr = source_psr;
                 } else {
