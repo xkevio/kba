@@ -65,6 +65,9 @@ fn decode(index: u16) -> String {
             "Arm7TDMI::block_data_transfer::<{}, {}, {}, {}, {}>",
             p_bit, u_bit, s_bit, w_bit, l_bit
         )
+    } else if index & 0b1101_1001_0000 == 0b0001_0000_0000 {
+        let imm = index & (1 << 9) != 0;
+        format!("Arm7TDMI::psr_transfer::<{}>", imm)
     } else if index & 0b1100_0000_0000 == 0b0000_0000_0000 {
         let imm = index & (1 << 9) != 0;
         let s_bit = index & (1 << 4) != 0;
