@@ -437,47 +437,43 @@ impl Arm7TDMI {
             self.barrel_shifter::<false>(opcode as u16).0
         };
 
+        let pc = if rn == 15 { 8 } else { 0 };
         let base_with_offset = if U {
-            self.regs[rn] + offset
+            self.regs[rn] + pc + offset
         } else {
-            self.regs[rn] - offset
+            self.regs[rn] + pc - offset
         };
 
-        let mut address = if P { base_with_offset } else { self.regs[rn] };
-        #[rustfmt::skip]
-        if rn == 15 { address += 8 };
+        let address = if P {
+            base_with_offset
+        } else {
+            self.regs[rn] + pc
+        };
 
         // Load from memory if L, else store register into memory.
         if L {
-            // Force align address.
-            let (aligned_address, data_ror) = if !B && address % 4 != 0 {
+            let (align, ror) = if !B && address % 4 != 0 {
                 (address & !3, (address & 3) * 8)
             } else {
                 (address, 0)
             };
 
             let val = if B {
-                self.bus.read8(aligned_address) as u32
+                self.bus.read8(address) as u32
             } else {
-                self.bus.read32(aligned_address)
+                self.bus.read32(align)
             };
 
-            self.regs[rd] = val.rotate_right(data_ror);
+            self.regs[rd] = val.rotate_right(ror);
         } else {
-            let aligned_address = if !B && address % 4 != 0 {
-                address & !3
-            } else {
-                address
-            };
-
             if B {
-                self.bus.write8(aligned_address, self.regs[rd] as u8);
+                self.bus.write8(address, self.regs[rd] as u8);
             } else {
-                self.bus.write32(aligned_address, self.regs[rd]);
+                self.bus.write32(address, self.regs[rd]);
             }
         }
 
-        if W || !P {
+        if (W || !P) && (rn != rd) {
             self.regs[rn] = base_with_offset;
         }
     }
