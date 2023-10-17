@@ -478,7 +478,7 @@ impl Arm7TDMI {
         }
     }
 
-    /// LDRH/STRH and LDRSB/LDRSH
+    /// LDRH/STRH and LDRSB/LDRSH (TODO: align)
     pub fn hw_signed_data_transfer<
         const I: bool,
         const P: bool,
@@ -533,7 +533,7 @@ impl Arm7TDMI {
         }
     }
 
-    /// LDM/STM.
+    /// LDM/STM. (TODO: align)
     #[rustfmt::skip]
     pub fn block_data_transfer<
         const P: bool,
