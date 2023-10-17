@@ -6,7 +6,7 @@ use proc_bitfield::{bitfield, ConvRaw};
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
 type Spsr = Cpsr;
 /// Each mode has its own banked registers (mostly r13 and r14).
-type BankedRegisters = (Spsr, [u32; 7]);
+type BankedRegisters = (Spsr, [u32; 16]);
 
 // Include the generated LUT at compile time.
 include!(concat!(env!("OUT_DIR"), "/instructions.rs"));
@@ -533,7 +533,8 @@ impl Arm7TDMI {
         }
     }
 
-    /// LDM/STM (todo: psr bit)
+    /// LDM/STM.
+    #[rustfmt::skip]
     pub fn block_data_transfer<
         const P: bool,
         const U: bool,
@@ -549,35 +550,51 @@ impl Arm7TDMI {
             .filter(|i| (opcode as u16) & (1 << i) != 0)
             .collect::<Vec<_>>();
 
+        // Edge case: PSR bit and r15 not in list.
+        let user_bank = S && !reg_list.contains(&15);
+
         let mut address = self.regs[rn];
-        if !U {
-            reg_list.reverse();
-        }
+        if !U { reg_list.reverse() }
 
         for r in &reg_list {
             if P {
                 // Pre-{inc, dec}rement addressing.
                 address = if U { address + 4 } else { address - 4 };
+            }
 
-                if L {
-                    self.regs[*r] = self.bus.read32(address);
-                } else {
-                    self.bus.write32(address, self.regs[*r]);
+            if L {
+                // Edge case: PSR bit and r15 in list.
+                if S && *r == 15 {
+                    self.cpsr.set_cpsr(self.spsr.cpsr());
+                }
+
+                match user_bank {
+                    false => self.regs[*r] = self.bus.read32(address),
+                    true => {
+                        self.banked_regs
+                            .entry(Mode::User)
+                            .and_modify(|(_, regs)| regs[*r] = self.bus.read32(address));
+                    }
                 }
             } else {
-                if L {
-                    self.regs[*r] = self.bus.read32(address);
-                } else {
-                    self.bus.write32(address, self.regs[*r]);
-                }
+                self.bus.write32(
+                    address,
+                    if !user_bank {
+                        self.regs[*r]
+                    } else {
+                        self.banked_regs[&Mode::User].1[*r]
+                    },
+                );
+            }
 
+            if !P {
                 // Post-{inc, dec}rement addressing.
                 address = if U { address + 4 } else { address - 4 };
             }
         }
 
-        // TODO: check for base register in register list
-        if W || !P {
+        // Writeback if W or Post and if Load but rn not in list or if Store.
+        if (W || !P) && !(L && reg_list.contains(&rn)) {
             self.regs[rn] = address;
         }
     }
@@ -593,21 +610,16 @@ impl Arm7TDMI {
             .banked_regs
             .get(&new_mode)
             .cloned()
-            .unwrap_or((Cpsr(0), [0; 7]));
+            .unwrap_or((Cpsr(0), [0; 16]));
 
-        self.banked_regs.insert(
-            current_mode,
-            (
-                self.spsr,
-                std::array::from_fn::<_, 7, _>(|i| self.regs[i + 8]),
-            ),
-        );
+        self.banked_regs
+            .insert(current_mode, (self.spsr, self.regs));
         self.spsr = spsr_mode;
 
         if current_mode == Mode::Fiq {
-            self.regs[8..=14].copy_from_slice(&bank_regs);
+            self.regs[8..=14].copy_from_slice(&bank_regs[8..=14]);
         } else {
-            self.regs[13..=14].copy_from_slice(&bank_regs[5..=6]);
+            self.regs[13..=14].copy_from_slice(&bank_regs[13..=14]);
         }
     }
 
