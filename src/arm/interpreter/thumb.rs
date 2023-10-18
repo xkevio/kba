@@ -1,39 +1,46 @@
-use crate::mmu::Mcu;
+use crate::{fl, mmu::Mcu};
 
-use super::arm7tdmi::Arm7TDMI;
+use super::arm7tdmi::{Arm7TDMI, State};
 
 // TODO: flags for CPSR!
+
 /// Thumb instructions live in this impl block.
 impl Arm7TDMI {
     /// Format 1: move shifted register.
     pub fn mov_shifted_reg(&mut self, opcode: u16) {
-        let rd = opcode & 0x7;
-        let rs = (opcode >> 3) & 0x7;
+        let rd = opcode as usize & 0x7;
+        let rs = (opcode as usize >> 3) & 0x7;
 
         let offset = (opcode >> 6) & 0x1F;
         let op = (opcode >> 11) & 0x3;
 
-        self.regs[rd as usize] = match op {
-            0b00 => self.regs[rs as usize] << offset,
-            0b01 => self.regs[rs as usize] >> offset,
+        self.regs[rd] = match op {
+            0b00 => {
+                let (res, carry) = self.lsl(self.regs[rs], offset as u32, false);
+                self.cpsr.set_c(carry);
+                res
+            }
+            0b01 => {
+                let (res, carry) = self.lsr(self.regs[rs], offset as u32, false);
+                self.cpsr.set_c(carry);
+                res
+            }
             0b10 => {
-                let bit31 = self.regs[rs as usize] & (1 << 31);
-                let mut res = self.regs[rs as usize] >> offset;
-
-                for i in 0..offset {
-                    res |= bit31 >> i;
-                }
-
+                let (res, carry) = self.asr(self.regs[rs], offset as u32, false);
+                self.cpsr.set_c(carry);
                 res
             }
             _ => unreachable!(),
         };
+
+        self.cpsr.set_z(self.regs[rd] == 0);
+        self.cpsr.set_n((self.regs[rd] & (1 << 31)) != 0);
     }
 
     /// Format 2: add/substract.
     pub fn add_sub<const I: bool>(&mut self, opcode: u16) {
-        let rd = opcode & 0x7;
-        let rs = (opcode >> 3) & 0x7;
+        let rd = opcode as usize & 0x7;
+        let rs = (opcode as usize >> 3) & 0x7;
 
         let offset = if I {
             (opcode as u32 >> 6) & 0x7
@@ -41,11 +48,14 @@ impl Arm7TDMI {
             self.regs[(opcode as usize >> 6) & 0x7]
         };
 
-        self.regs[rd as usize] = match (opcode >> 9) & 1 {
-            0 => self.regs[rs as usize] + offset,
-            1 => self.regs[rs as usize] - offset,
+        self.regs[rd] = match (opcode >> 9) & 1 {
+            0 => fl!(self.regs[rs], offset, +, self, cpsr),
+            1 => fl!(self.regs[rs], offset, -, self, cpsr),
             _ => unreachable!(),
         };
+
+        self.cpsr.set_z(self.regs[rd] == 0);
+        self.cpsr.set_n((self.regs[rd] & (1 << 31)) != 0);
     }
 
     /// Format 3: move/compare/add/substract immediate.
@@ -55,11 +65,24 @@ impl Arm7TDMI {
 
         self.regs[rd] = match (opcode >> 11) & 0x3 {
             0b00 => offset,
-            0b01 => todo!("cmp"),
-            0b10 => self.regs[rd] + offset,
-            0b11 => self.regs[rd] - offset,
+            0b01 => {
+                let cmp_res = fl!(self.regs[rd], offset, -, self, cpsr);
+
+                self.cpsr.set_z(cmp_res == 0);
+                self.cpsr.set_n((cmp_res & (1 << 31)) != 0);
+
+                self.regs[rd]
+            }
+            0b10 => fl!(self.regs[rd], offset, +, self, cpsr),
+            0b11 => fl!(self.regs[rd], offset, -, self, cpsr),
             _ => unreachable!(),
         };
+
+        // If NOT cmp.
+        if (opcode >> 11) & 0x3 != 0b01 {
+            self.cpsr.set_z(self.regs[rd] == 0);
+            self.cpsr.set_n((self.regs[rd] & (1 << 31)) != 0);
+        }
     }
 
     /// Format 4: ALU operations.
@@ -70,28 +93,36 @@ impl Arm7TDMI {
         // If intermediate: TST, CMP, CMN.
         let mut intmd = false;
 
+        #[rustfmt::skip]
         let res = match (opcode >> 6) & 0xF {
             0b0000 => self.regs[rd] & self.regs[rs],
             0b0001 => self.regs[rd] ^ self.regs[rs],
-            0b0010 => self.regs[rd] << self.regs[rs],
-            0b0011 => self.regs[rd] >> self.regs[rs],
-            0b0100 => todo!("asr"),
-            0b0101 => self.regs[rd] + self.regs[rs] + self.cpsr.c() as u32,
-            0b0110 => self.regs[rd] - self.regs[rs] - (!self.cpsr.c()) as u32,
-            0b0111 => self.regs[rd].rotate_right(self.regs[rs]),
-            0b1000 => {
-                intmd = true;
-                todo!("tst")
+            0b0010 => {
+                let (res, carry) = self.lsl(self.regs[rd], self.regs[rs], true);
+                self.cpsr.set_c(carry);
+                res
             }
-            0b1001 => self.regs[rs].wrapping_neg(),
-            0b1010 => {
-                intmd = true;
-                todo!("cmp")
+            0b0011 => {
+                let (res, carry) = self.lsr(self.regs[rd], self.regs[rs], true);
+                self.cpsr.set_c(carry);
+                res
             }
-            0b1011 => {
-                intmd = true;
-                todo!("cmn")
+            0b0100 => {
+                let (res, carry) = self.asr(self.regs[rd], self.regs[rs], true);
+                self.cpsr.set_c(carry);
+                res
             }
+            0b0101 => fl!(self.regs[rd], self.regs[rs] + self.cpsr.c() as u32, +, self, cpsr),
+            0b0110 => fl!(self.regs[rd], self.regs[rs], (!self.cpsr.c()) as u32, -, self, cpsr),
+            0b0111 => {
+                let (res, carry) = self.ror(self.regs[rd], self.regs[rs], true);
+                self.cpsr.set_c(carry);
+                res
+            },
+            0b1000 => { intmd = true; self.regs[rd] & self.regs[rs] },
+            0b1001 => fl!(0, self.regs[rs], -, self, cpsr),
+            0b1010 => { intmd = true; fl!(self.regs[rd], self.regs[rs], -, self, cpsr) },
+            0b1011 => { intmd = true; fl!(self.regs[rd], self.regs[rs], +, self, cpsr) },
             0b1100 => self.regs[rd] | self.regs[rs],
             0b1101 => self.regs[rd] * self.regs[rs],
             0b1110 => self.regs[rd] & !self.regs[rs],
@@ -99,19 +130,52 @@ impl Arm7TDMI {
             _ => unreachable!(),
         };
 
+        self.cpsr.set_z(res == 0);
+        self.cpsr.set_n((res & (1 << 31)) != 0);
+
         if !intmd {
             self.regs[rd] = res;
         }
     }
 
-    // TODO: Format 5.
+    /// Format 5: Hi reg ops/bx
+    #[rustfmt::skip]
+    pub fn hi_reg_op_bx<const H1: bool, const H2: bool>(&mut self, opcode: u16) {
+        let rd = opcode as usize & 0x7;
+        let rs = (opcode as usize >> 3) & 0x7;
+        let op = (opcode >> 8) & 0x3;
+
+        // Branch exchange.
+        if op == 0b11 {
+            let addr = if !H2 { self.regs[rs] } else { self.regs[rs + 8] };
+            self.regs[15] = addr;
+
+            // Bit 0 of Rn decides decoding of subsequent instructions.
+            if addr & 1 == 0 {
+                self.cpsr.set_state(State::Arm);
+            } else {
+                self.cpsr.set_state(State::Thumb);
+            }
+
+            return;
+        }
+
+        let dst = if !H1 { rd } else { rd + 8 };
+        let src = if !H2 { rs } else { rs + 8 };
+        self.regs[dst] = match op {
+            0b00 => self.regs[dst] + self.regs[src],
+            0b01 => { fl!(self.regs[dst], self.regs[src], -, self, cpsr); self.regs[dst] },
+            0b10 => self.regs[src],
+            _ => unreachable!(),
+        };
+    }
 
     /// Format 6: PC-relative load.
     pub fn pc_rel_load(&mut self, opcode: u16) {
-        let offset = opcode as u8 as u32;
+        let offset = (opcode as u8 as u32) << 2;
         let rd = (opcode as usize >> 8) & 0x7;
 
-        self.regs[rd] = self.bus.read32(self.regs[15] + offset + 4);
+        self.regs[rd] = self.bus.read32(((self.regs[15] + 4) & !1) + offset);
     }
 
     /// Format 7: load/store with register offset.
@@ -158,7 +222,7 @@ impl Arm7TDMI {
         let rb = (opcode as usize >> 3) & 0x7;
         let offset = (opcode as u32 >> 6) & 0x1F;
 
-        let address = self.regs[rb] + offset;
+        let address = self.regs[rb] + (offset << if B { 0 } else { 2 });
 
         if L {
             self.regs[rd] = if B {
@@ -180,7 +244,7 @@ impl Arm7TDMI {
         let rb = (opcode as usize >> 3) & 0x7;
         let offset = (opcode as u32 >> 6) & 0x1F;
 
-        let address = self.regs[rb] + offset;
+        let address = self.regs[rb] + (offset << 1);
 
         if L {
             self.regs[rd] = self.bus.read16(address) as u32;
@@ -195,9 +259,10 @@ impl Arm7TDMI {
         let rd = (opcode as usize >> 8) & 0x7;
 
         if L {
-            self.regs[rd] = self.bus.read32(self.regs[13] + offset);
+            self.regs[rd] = self.bus.read32(self.regs[13] + (offset << 2));
         } else {
-            self.bus.write32(self.regs[13] + offset, self.regs[rd]);
+            self.bus
+                .write32(self.regs[13] + (offset << 2), self.regs[rd]);
         }
     }
 
@@ -217,9 +282,9 @@ impl Arm7TDMI {
         let offset = (opcode & 0x7F) as i8 as i32;
 
         if S {
-            self.regs[13] -= offset as u32;
+            self.regs[13] -= (offset << 2) as u32;
         } else {
-            self.regs[13] = self.regs[13].wrapping_add_signed(offset);
+            self.regs[13] = self.regs[13].wrapping_add_signed(offset << 2);
         }
     }
 
@@ -237,15 +302,15 @@ impl Arm7TDMI {
 
     // Format 17: swi (same as ARM)
 
-    /// Format 18: unconditional branch. (shift left?)
+    /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
-        let signed_offset = (opcode & 0x7F) as i32;
+        let signed_offset = ((opcode & 0x7FF) << 1) as i32;
         self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4);
     }
 
     /// Format 19: long branch with link.
     pub fn long_branch<const H: bool>(&mut self, opcode: u16) {
-        let offset = opcode & 0x7F;
+        let offset = opcode & 0x7FF;
 
         if !H {
             self.regs[14] = self.regs[15] + ((offset as u32) << 12);

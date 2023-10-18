@@ -83,7 +83,7 @@ impl From<State> for bool {
 }
 
 impl Arm7TDMI {
-    // TODO.
+    /// Initialize SP and PC to the correct values or, if `skip_crt0`, additional registers.
     pub fn setup_registers(skip_crt0: bool) -> Self {
         let mut regs = [0; 16];
 
@@ -107,6 +107,7 @@ impl Arm7TDMI {
         }
     }
 
+    /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
         let opcode = self.bus.read32(self.regs[15]);
 
@@ -123,6 +124,8 @@ impl Arm7TDMI {
 
         self.regs[15] += 4;
     }
+
+    // ARM INSTRUCTIONS IMPLEMENTATION & SHIFTER.
 
     /// If `I` is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.
@@ -599,33 +602,16 @@ impl Arm7TDMI {
         }
     }
 
-    // Test for LUT.
+    /// Test for LUT.
     pub fn dummy(&mut self, _opcode: u32) {
         panic!("shouldn't be called!")
     }
 
-    /// Swap banked registers on mode change. Call before changing mode in CPSR.
-    fn swap_regs(&mut self, current_mode: Mode, new_mode: Mode) {
-        let (spsr_mode, bank_regs) = self
-            .banked_regs
-            .get(&new_mode)
-            .cloned()
-            .unwrap_or((Cpsr(0), [0; 16]));
-
-        self.banked_regs
-            .insert(current_mode, (self.spsr, self.regs));
-        self.spsr = spsr_mode;
-
-        if current_mode == Mode::Fiq {
-            self.regs[8..=14].copy_from_slice(&bank_regs[8..=14]);
-        } else {
-            self.regs[13..=14].copy_from_slice(&bank_regs[13..=14]);
-        }
-    }
+    // BARREL SHIFTER UTILITY METHODS.
 
     /// Logical shift left, returns result and carry out.
     #[inline(always)]
-    fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+    pub(super) fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         match reg {
             false => (rm << amount, rm & (1 << (32 - amount + 1)) != 0),
             true => {
@@ -642,7 +628,7 @@ impl Arm7TDMI {
 
     /// Logical shift right, returns result and carry out.
     #[inline(always)]
-    fn lsr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+    pub(super) fn lsr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         match reg {
             false => {
                 if amount == 0 {
@@ -665,7 +651,7 @@ impl Arm7TDMI {
 
     /// Arithmetic shift right, returns result and carry out.
     #[inline(always)]
-    fn asr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+    pub(super) fn asr(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         if reg && amount == 0 {
             return (rm, self.cpsr.c());
         }
@@ -687,7 +673,7 @@ impl Arm7TDMI {
 
     /// Rotate right, returns result and carry out.
     #[inline(always)]
-    fn ror(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
+    pub(super) fn ror(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         if amount == 0 {
             if reg {
                 return (rm, self.cpsr.c());
@@ -697,5 +683,24 @@ impl Arm7TDMI {
         }
 
         (rm.rotate_right(amount), rm & (1 << (amount - 1)) != 0)
+    }
+
+    /// Swap banked registers on mode change. Call before changing mode in CPSR.
+    fn swap_regs(&mut self, current_mode: Mode, new_mode: Mode) {
+        let (spsr_mode, bank_regs) = self
+            .banked_regs
+            .get(&new_mode)
+            .cloned()
+            .unwrap_or((Cpsr(0), [0; 16]));
+
+        self.banked_regs
+            .insert(current_mode, (self.spsr, self.regs));
+        self.spsr = spsr_mode;
+
+        if current_mode == Mode::Fiq {
+            self.regs[8..=14].copy_from_slice(&bank_regs[8..=14]);
+        } else {
+            self.regs[13..=14].copy_from_slice(&bank_regs[13..=14]);
+        }
     }
 }
