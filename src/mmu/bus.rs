@@ -31,7 +31,7 @@ impl Mcu for Bus {
         match address {
             0x0000..=0x3FFF => self.bios[address as usize],
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000],
-            0x0300_0000..=0x0300_7FFF => self.wram[address as usize - 0x02FC_0000],
+            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x0000_8000) + 0x3_FFFF],
             0x0400_0000..=0x0400_03FE => self.io.read8(address - 0x0400_0000),
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000],
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000],
@@ -45,7 +45,9 @@ impl Mcu for Bus {
     fn write8(&mut self, address: u32, value: u8) {
         match address {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000] = value,
-            0x0300_0000..=0x0300_7FFF => self.wram[address as usize - 0x02FC_0000] = value,
+            0x0300_0000..=0x03FF_FFFF => {
+                self.wram[(address as usize % 0x0000_8000) + 0x3_FFFF] = value
+            }
             0x0400_0000..=0x0400_03FE => self.io.write8(address - 0x0400_0000, value),
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,

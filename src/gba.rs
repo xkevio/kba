@@ -15,7 +15,7 @@ impl Gba {
     pub fn with_rom(rom: &[u8]) -> Self {
         Self {
             rom: rom.to_vec(),
-            cpu: Arm7TDMI::setup_registers(true),
+            cpu: Arm7TDMI::setup_registers(false),
             ..Default::default()
         }
     }

@@ -106,7 +106,7 @@ impl Ppu {
                     self.buffer[start + i] = u16::from_be_bytes([c1, c0]);
                 }
             }
-            _ => unimplemented!(),
+            _ => {}
         }
     }
 }

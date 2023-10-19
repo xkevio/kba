@@ -9,7 +9,8 @@ type Spsr = Cpsr;
 type BankedRegisters = (Spsr, [u32; 16]);
 
 // Include the generated LUT at compile time.
-include!(concat!(env!("OUT_DIR"), "/instructions.rs"));
+include!(concat!(env!("OUT_DIR"), "/arm_instructions.rs"));
+include!(concat!(env!("OUT_DIR"), "/thumb_instructions.rs"));
 
 #[derive(Default)]
 pub struct Arm7TDMI {
@@ -22,6 +23,7 @@ pub struct Arm7TDMI {
     banked_regs: HashMap<Mode, BankedRegisters>,
 }
 
+#[derive(PartialEq)]
 pub enum State {
     Arm,
     Thumb,
@@ -109,20 +111,29 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        let opcode = self.bus.read32(self.regs[15]);
+        // println!("{:X?}\n", self.regs);
+        match self.cpsr.state() {
+            State::Arm => {
+                let opcode = self.bus.read32(self.regs[15]);
 
-        let cond = (opcode & 0xF000_0000) >> 28;
-        let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
+                let cond = (opcode & 0xF000_0000) >> 28;
+                let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
-        if self.cond(cond as u8) {
-            // println!("{:X?}\n", self.regs);
-            match self.cpsr.state() {
-                State::Arm => ARM_INSTRUCTIONS[op_index as usize](self, opcode),
-                State::Thumb => todo!(),
+                if self.cond(cond as u8) {
+                    ARM_INSTRUCTIONS[op_index as usize](self, opcode);
+                }
+            }
+            State::Thumb => {
+                let opcode = self.bus.read16(self.regs[15]);
+                THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
 
-        self.regs[15] += 4;
+        self.regs[15] += if self.cpsr.state() == State::Arm {
+            4
+        } else {
+            2
+        };
     }
 
     // ARM INSTRUCTIONS IMPLEMENTATION & SHIFTER.
@@ -194,6 +205,12 @@ impl Arm7TDMI {
         let operation = (opcode & 0x01E0_0000) >> 21;
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
+        // If operand is PC, add 8.
+        let rn = if (opcode as usize & 0x000F_0000) >> 16 == 15 {
+            rn + 8
+        } else {
+            rn
+        };
 
         #[rustfmt::skip]
         let result = match operation {
@@ -239,7 +256,7 @@ impl Arm7TDMI {
 
         // FIXME: temporary check for mov r15, r1-r13.
         if !is_intmd {
-            self.regs[rd] = if rd == 15 && (opcode & 0xF) != 14 {
+            self.regs[rd] = if rd == 15 && (opcode & 0xF) != 14 && operation == 0b1101 {
                 result - 4
             } else {
                 result
@@ -323,13 +340,16 @@ impl Arm7TDMI {
     pub fn bx(&mut self, opcode: u32) {
         let rn = self.regs[opcode as usize & 0xF];
 
-        self.regs[15] = rn;
+        println!("BX, set r15 to {:X}", rn);
+        self.regs[15] = rn & !1;
 
         // Bit 0 of Rn decides decoding of subsequent instructions.
         if rn & 1 == 0 {
             self.cpsr.set_state(State::Arm);
+            self.regs[15] -= 4;
         } else {
             self.cpsr.set_state(State::Thumb);
+            self.regs[15] -= 2;
         }
     }
 
@@ -613,12 +633,12 @@ impl Arm7TDMI {
     #[inline(always)]
     pub(super) fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         match reg {
-            false => (rm << amount, rm & (1 << (32 - amount + 1)) != 0),
+            false => (rm << amount, rm & (1 << (32 - amount)) != 0),
             true => {
                 if amount == 0 {
                     (rm, self.cpsr.c())
                 } else if amount < 32 {
-                    (rm << amount, rm & (1 << (32 - amount + 1)) != 0)
+                    (rm << amount, rm & (1 << (32 - amount)) != 0)
                 } else {
                     (0, (rm & 1) != 0)
                 }

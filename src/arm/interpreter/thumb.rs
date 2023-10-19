@@ -2,8 +2,6 @@ use crate::{fl, mmu::Mcu};
 
 use super::arm7tdmi::{Arm7TDMI, State};
 
-// TODO: flags for CPSR!
-
 /// Thumb instructions live in this impl block.
 impl Arm7TDMI {
     /// Format 1: move shifted register.
@@ -140,28 +138,34 @@ impl Arm7TDMI {
 
     /// Format 5: Hi reg ops/bx
     #[rustfmt::skip]
-    pub fn hi_reg_op_bx<const H1: bool, const H2: bool>(&mut self, opcode: u16) {
+    pub fn hi_reg_op_bx(&mut self, opcode: u16) {
         let rd = opcode as usize & 0x7;
         let rs = (opcode as usize >> 3) & 0x7;
         let op = (opcode >> 8) & 0x3;
 
+        // No const generic if decoding with 8 bits :(
+        let h1 = opcode & (1 << 7) != 0;
+        let h2 = opcode & (1 << 6) != 0;
+
         // Branch exchange.
         if op == 0b11 {
-            let addr = if !H2 { self.regs[rs] } else { self.regs[rs + 8] };
-            self.regs[15] = addr;
+            let addr = if !h2 { self.regs[rs] } else { self.regs[rs + 8] };
+            self.regs[15] = addr & !1;
 
             // Bit 0 of Rn decides decoding of subsequent instructions.
             if addr & 1 == 0 {
                 self.cpsr.set_state(State::Arm);
+                self.regs[15] -= 4;
             } else {
                 self.cpsr.set_state(State::Thumb);
+                self.regs[15] -= 4;
             }
 
             return;
         }
 
-        let dst = if !H1 { rd } else { rd + 8 };
-        let src = if !H2 { rs } else { rs + 8 };
+        let dst = if !h1 { rd } else { rd + 8 };
+        let src = if !h2 { rs } else { rs + 8 };
         self.regs[dst] = match op {
             0b00 => self.regs[dst] + self.regs[src],
             0b01 => { fl!(self.regs[dst], self.regs[src], -, self, cpsr); self.regs[dst] },
@@ -175,7 +179,7 @@ impl Arm7TDMI {
         let offset = (opcode as u8 as u32) << 2;
         let rd = (opcode as usize >> 8) & 0x7;
 
-        self.regs[rd] = self.bus.read32(((self.regs[15] + 4) & !1) + offset);
+        self.regs[rd] = self.bus.read32(((self.regs[15] + 4) & !2) + offset);
     }
 
     /// Format 7: load/store with register offset.
@@ -278,29 +282,96 @@ impl Arm7TDMI {
     }
 
     /// Format 13: add offset to SP. (todo: 9 bit constant?)
-    pub fn add_sp<const S: bool>(&mut self, opcode: u16) {
+    pub fn add_sp(&mut self, opcode: u16) {
         let offset = (opcode & 0x7F) as i8 as i32;
+        let s = opcode & (1 << 7) != 0;
 
-        if S {
+        // No const generic with current 8bit thumb decoding :(
+        if s {
             self.regs[13] -= (offset << 2) as u32;
         } else {
             self.regs[13] = self.regs[13].wrapping_add_signed(offset << 2);
         }
     }
 
-    // Format 14.
-    // Format 15.
+    /// Format 14: push/pop registers.
+    pub fn push_pop<const L: bool, const R: bool>(&mut self, opcode: u16) {
+        let mut reg_list = (0..=7)
+            .filter(|i| (opcode & (1 << i)) != 0)
+            .collect::<Vec<_>>();
 
-    /// Format 16: conditional branch.
-    pub fn cond_branch(&mut self, opcode: u16) {
-        let signed_offset = opcode as u8 as i32;
+        let mut address = self.regs[13];
+        if !L {
+            reg_list.reverse()
+        }
 
-        if self.cond((opcode >> 8) as u8 & 0xF) {
-            self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4);
+        if R && !L {
+            address -= 4;
+            self.bus.write32(address, self.regs[14])
+        }
+
+        for r in &reg_list {
+            if L {
+                self.regs[*r] = self.bus.read32(address);
+                address += 4;
+            } else {
+                address -= 4;
+                self.bus.write32(address, self.regs[*r]);
+            }
+        }
+
+        if R && L {
+            self.regs[15] = self.bus.read32(address);
+            address += 4;
+        }
+
+        // Writeback if r13 not in reg list.
+        if (L && !reg_list.contains(&13)) || !L {
+            self.regs[13] = address;
         }
     }
 
-    // Format 17: swi (same as ARM)
+    /// Format 15: multiple load/store
+    pub fn ldm_stm<const L: bool>(&mut self, opcode: u16) {
+        let mut reg_list = (0..=7)
+            .filter(|i| (opcode & (1 << i)) != 0)
+            .collect::<Vec<_>>();
+
+        let rb = (opcode as usize >> 8) & 0x7;
+        let mut address = self.regs[rb];
+        if !L {
+            reg_list.reverse()
+        }
+
+        for r in &reg_list {
+            if L {
+                self.regs[*r] = self.bus.read32(address);
+            } else {
+                self.bus.write32(address, self.regs[*r]);
+            }
+
+            address += 4
+        }
+
+        // Writeback if r13 not in reg list.
+        if (L && !reg_list.contains(&rb)) || !L {
+            self.regs[rb] = address;
+        }
+    }
+
+    /// Format 16: conditional branch.
+    pub fn cond_branch(&mut self, opcode: u16) {
+        let signed_offset = ((opcode & 0xFF) << 1) as i8 as i32;
+
+        if self.cond((opcode >> 8) as u8 & 0xF) {
+            self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4 - 2);
+        }
+    }
+
+    /// Format 17: swi (same as ARM)
+    pub fn t_swi(&mut self, _opcode: u16) {
+        self.swi(0);
+    }
 
     /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
@@ -313,11 +384,16 @@ impl Arm7TDMI {
         let offset = opcode & 0x7FF;
 
         if !H {
-            self.regs[14] = self.regs[15] + ((offset as u32) << 12);
+            // Sign extend top half, shift by 12 offset bcs of prev shift.
+            let s_off = ((offset << 5) as i16 as i32) << 7;
+            self.regs[14] = (self.regs[15] + 2).wrapping_add_signed(s_off);
         } else {
-            let addr = self.regs[14] + ((offset as u32) << 1);
+            let addr = self.regs[14] + ((offset << 1) as u32);
             self.regs[14] = (self.regs[15] + 4) | 1;
-            self.regs[15] = addr + 4;
+            self.regs[15] = addr;
         }
     }
+
+    /// Dummy for Thumb LUT.
+    pub fn t_dummy(&mut self, _opcode: u16) {}
 }
