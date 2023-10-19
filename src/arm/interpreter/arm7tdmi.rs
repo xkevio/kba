@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::{Write, BufWriter}, fs::File};
 
 use crate::{fl, mmu::bus::Bus, mmu::Mcu};
 use proc_bitfield::{bitfield, ConvRaw};
@@ -14,13 +14,21 @@ include!(concat!(env!("OUT_DIR"), "/thumb_instructions.rs"));
 
 #[derive(Default)]
 pub struct Arm7TDMI {
+    /// 16 registers, most GPR, r14 = LR, r15 = PC.
     pub regs: [u32; 16],
+    /// Current Program Status Register.
     pub cpsr: Cpsr,
 
+    /// The memory bus, owned by the CPU for now.
     pub bus: Bus,
 
+    /// Saved Program Status Register for all modes but User.
     spsr: Spsr,
+    /// The other banked registers of the other modes.
     banked_regs: HashMap<Mode, BankedRegisters>,
+
+    /// If the prev. instruction directly **set** r15.
+    pub(super) branch: bool,
 }
 
 #[derive(PartialEq)]
@@ -110,8 +118,8 @@ impl Arm7TDMI {
     }
 
     /// Cycle through an instruction with 1 CPI.
-    pub fn cycle(&mut self) {
-        // println!("{:X?}\n", self.regs);
+    pub fn cycle(&mut self, out: &mut BufWriter<File>) {
+        // writeln!(out, "{:X?}\n", self.regs).unwrap();
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -129,11 +137,12 @@ impl Arm7TDMI {
             }
         }
 
-        self.regs[15] += if self.cpsr.state() == State::Arm {
-            4
-        } else {
-            2
+        self.regs[15] += match self.cpsr.state() {
+            State::Arm => 4,
+            State::Thumb => if self.branch { 0 } else { 2 },
         };
+
+        self.branch = false;
     }
 
     // ARM INSTRUCTIONS IMPLEMENTATION & SHIFTER.

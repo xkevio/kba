@@ -155,10 +155,11 @@ impl Arm7TDMI {
             // Bit 0 of Rn decides decoding of subsequent instructions.
             if addr & 1 == 0 {
                 self.cpsr.set_state(State::Arm);
-                self.regs[15] -= 4;
+                // self.regs[15] -= 4;
             } else {
                 self.cpsr.set_state(State::Thumb);
-                self.regs[15] -= 4;
+                self.branch = true;
+                // self.regs[15] -= 2;
             }
 
             return;
@@ -321,7 +322,8 @@ impl Arm7TDMI {
         }
 
         if R && L {
-            self.regs[15] = self.bus.read32(address);
+            self.regs[15] = self.bus.read32(address) & !1;
+            self.branch = true;
             address += 4;
         }
 
@@ -375,8 +377,8 @@ impl Arm7TDMI {
 
     /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
-        let signed_offset = ((opcode & 0x7FF) << 1) as i32;
-        self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4);
+        let signed_offset = (((opcode as u32 & 0x7FF) << 1) << 22) as i32 >> 22;
+        self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4 - 2);
     }
 
     /// Format 19: long branch with link.
@@ -385,12 +387,15 @@ impl Arm7TDMI {
 
         if !H {
             // Sign extend top half, shift by 12 offset bcs of prev shift.
-            let s_off = ((offset << 5) as i16 as i32) << 7;
-            self.regs[14] = (self.regs[15] + 2).wrapping_add_signed(s_off);
+            let s_off = (((offset as u32) << 22) as i32 >> 22) << 12;
+            self.regs[14] = (self.regs[15] + 4).wrapping_add_signed(s_off);
         } else {
             let addr = self.regs[14] + ((offset << 1) as u32);
-            self.regs[14] = (self.regs[15] + 4) | 1;
+
+            self.regs[14] = (self.regs[15] + 2) | 1;
             self.regs[15] = addr;
+
+            self.branch = true;
         }
     }
 

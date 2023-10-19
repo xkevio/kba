@@ -1,3 +1,5 @@
+use std::{io::{StdoutLock, BufWriter}, fs::File};
+
 use crate::arm::interpreter::arm7tdmi::Arm7TDMI;
 
 pub const LCD_WIDTH: usize = 240;
@@ -20,8 +22,8 @@ impl Gba {
         }
     }
 
-    pub fn run(&mut self) {
-        self.cpu.cycle();
+    pub fn run(&mut self, out: &mut BufWriter<File>) {
+        self.cpu.cycle(out);
         self.cpu
             .bus
             .io
