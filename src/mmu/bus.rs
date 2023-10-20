@@ -28,6 +28,7 @@ impl Default for Bus {
 
 impl Mcu for Bus {
     fn read8(&mut self, address: u32) -> u8 {
+        // TODO: sram
         match address {
             0x0000..=0x3FFF => self.bios[address as usize],
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000],
@@ -37,23 +38,20 @@ impl Mcu for Bus {
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000],
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000],
             0x0800_0000..=0x0DFF_FFFF => self.game_pak.read8(address - 0x0800_0000),
-            // TODO: sram
             _ => unreachable!("{}", format!("{address:X?}")),
         }
     }
 
     fn write8(&mut self, address: u32, value: u8) {
+        // TODO: sram
         match address {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000] = value,
-            0x0300_0000..=0x03FF_FFFF => {
-                self.wram[(address as usize % 0x0000_8000) + 0x3_FFFF] = value
-            }
+            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x8000) + 0x3_FFFF] = value,
             0x0400_0000..=0x0400_03FE => self.io.write8(address - 0x0400_0000, value),
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
-            // TODO: sram
-            _ => unreachable!("{}", format!("{address:X?}")),
+            _ => eprintln!("Write to ROM: {}", format!("{address:X?}")),
         }
     }
 }

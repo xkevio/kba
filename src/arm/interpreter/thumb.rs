@@ -180,7 +180,14 @@ impl Arm7TDMI {
         let offset = (opcode as u8 as u32) << 2;
         let rd = (opcode as usize >> 8) & 0x7;
 
-        self.regs[rd] = self.bus.read32(((self.regs[15] + 4) & !2) + offset);
+        let address = ((self.regs[15] + 4) & !2) + offset;
+        let (aligned_addr, ror) = if address % 4 != 0 {
+            (address & !3, (address & 3) * 8)
+        } else {
+            (address, 0)
+        };
+
+        self.regs[rd] = self.bus.read32(aligned_addr).rotate_right(ror);
     }
 
     /// Format 7: load/store with register offset.
@@ -204,7 +211,7 @@ impl Arm7TDMI {
             };
         } else {
             match B {
-                false => self.bus.write32(address, self.regs[rd]),
+                false => self.bus.write32(aligned_addr, self.regs[rd]),
                 true => self.bus.write8(address, self.regs[rd] as u8),
             }
         }
@@ -247,7 +254,7 @@ impl Arm7TDMI {
             };
         } else {
             match B {
-                false => self.bus.write32(address, self.regs[rd]),
+                false => self.bus.write32(aligned_addr, self.regs[rd]),
                 true => self.bus.write8(address, self.regs[rd] as u8),
             }
         }
@@ -344,16 +351,15 @@ impl Arm7TDMI {
     }
 
     /// Format 15: multiple load/store
+    #[rustfmt::skip]
     pub fn ldm_stm<const L: bool>(&mut self, opcode: u16) {
-        let mut reg_list = (0..=7)
+        let reg_list = (0..=7)
             .filter(|i| (opcode & (1 << i)) != 0)
             .collect::<Vec<_>>();
 
         let rb = (opcode as usize >> 8) & 0x7;
         let mut address = self.regs[rb];
-        if !L {
-            reg_list.reverse()
-        }
+        address = if address % 4 != 0 { address & !3 } else { address };
 
         for r in &reg_list {
             if L {
@@ -365,7 +371,7 @@ impl Arm7TDMI {
             address += 4
         }
 
-        // Writeback if r13 not in reg list.
+        // Writeback if rb not in reg list.
         if (L && !reg_list.contains(&rb)) || !L {
             self.regs[rb] = address;
         }
