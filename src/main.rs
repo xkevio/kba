@@ -1,7 +1,5 @@
 #![allow(dead_code)]
 
-use std::{io::{stdout, BufWriter, Write}, fs::File};
-
 use gba::{Gba, LCD_HEIGHT, LCD_WIDTH};
 use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
 
@@ -36,16 +34,13 @@ fn main() -> SdlResult<()> {
         .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
         .map_err(|e| e.to_string())?;
 
-    // Instruction log.
-    let mut out = BufWriter::new(File::create("i.txt").unwrap());
-
     // Actual loop that runs the program and the emulator.
     'main: loop {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
                 Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Return) => { writeln!(out, "Enter").unwrap(); kba.cpu.bus.io.key_input.set_start(false)},
+                    Some(Keycode::Return) => kba.cpu.bus.io.key_input.set_start(false),
                     Some(Keycode::Tab) => kba.cpu.bus.io.key_input.set_select(false),
                     Some(Keycode::Up) => kba.cpu.bus.io.key_input.set_up(false),
                     Some(Keycode::Down) => kba.cpu.bus.io.key_input.set_down(false),
@@ -60,10 +55,8 @@ fn main() -> SdlResult<()> {
 
         // For now, update every 266_666 cycles (60 frames).
         while kba.cycles < 266_666 {
-            kba.run(&mut out);
+            kba.run();
         }
-
-        out.flush().unwrap();
 
         // Update frame and treat everything as BG Mode 3 or 4 for now.
         texture.with_lock(None, |buffer: &mut [u8], _: usize| {

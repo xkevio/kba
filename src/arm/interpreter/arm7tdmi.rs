@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::{Write, BufWriter}, fs::File};
+use std::collections::HashMap;
 
 use crate::{fl, mmu::bus::Bus, mmu::Mcu};
 use proc_bitfield::{bitfield, ConvRaw};
@@ -118,8 +118,7 @@ impl Arm7TDMI {
     }
 
     /// Cycle through an instruction with 1 CPI.
-    pub fn cycle(&mut self, out: &mut BufWriter<File>) {
-        // writeln!(out, "{:X?}\n", self.regs).unwrap();
+    pub fn cycle(&mut self) {
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -139,7 +138,13 @@ impl Arm7TDMI {
 
         self.regs[15] += match self.cpsr.state() {
             State::Arm => 4,
-            State::Thumb => if self.branch { 0 } else { 2 },
+            State::Thumb => {
+                if self.branch {
+                    0
+                } else {
+                    2
+                }
+            }
         };
 
         self.branch = false;
@@ -348,8 +353,6 @@ impl Arm7TDMI {
     /// Branch and Exchange.
     pub fn bx(&mut self, opcode: u32) {
         let rn = self.regs[opcode as usize & 0xF];
-
-        println!("BX, set r15 to {:X}", rn);
         self.regs[15] = rn & !1;
 
         // Bit 0 of Rn decides decoding of subsequent instructions.

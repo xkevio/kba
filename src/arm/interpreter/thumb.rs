@@ -155,11 +155,9 @@ impl Arm7TDMI {
             // Bit 0 of Rn decides decoding of subsequent instructions.
             if addr & 1 == 0 {
                 self.cpsr.set_state(State::Arm);
-                // self.regs[15] -= 4;
             } else {
                 self.cpsr.set_state(State::Thumb);
                 self.branch = true;
-                // self.regs[15] -= 2;
             }
 
             return;
@@ -167,10 +165,12 @@ impl Arm7TDMI {
 
         let dst = if !h1 { rd } else { rd + 8 };
         let src = if !h2 { rs } else { rs + 8 };
+        let pc = if rs == 15 { 4 } else { 0 };
+
         self.regs[dst] = match op {
-            0b00 => self.regs[dst] + self.regs[src],
-            0b01 => { fl!(self.regs[dst], self.regs[src], -, self, cpsr); self.regs[dst] },
-            0b10 => self.regs[src],
+            0b00 => self.regs[dst] + self.regs[src] + pc,
+            0b01 => { fl!(self.regs[dst], self.regs[src] + pc, -, self, cpsr); self.regs[dst] },
+            0b10 => self.regs[src] + pc,
             _ => unreachable!(),
         };
     }
@@ -190,12 +190,17 @@ impl Arm7TDMI {
         let ro = (opcode as usize >> 6) & 0x7;
 
         let address = self.regs[rb] + self.regs[ro];
+        let (aligned_addr, ror) = if !B && address % 4 != 0 {
+            (address & !3, (address & 3) * 8)
+        } else {
+            (address, 0)
+        };
 
         if L {
             self.regs[rd] = if B {
                 self.bus.read8(address) as u32
             } else {
-                self.bus.read32(address)
+                self.bus.read32(aligned_addr).rotate_right(ror)
             };
         } else {
             match B {
@@ -216,8 +221,8 @@ impl Arm7TDMI {
         match (S, H) {
             (false, false) => self.bus.write16(address, self.regs[rd] as u16),
             (false, true) => self.regs[rd] = self.bus.read16(address) as u32,
-            (true, false) => self.regs[rd] = self.bus.read8(address) as i32 as u32,
-            (true, true) => self.regs[rd] = self.bus.read16(address) as i32 as u32,
+            (true, false) => self.regs[rd] = self.bus.read8(address) as i8 as u32,
+            (true, true) => self.regs[rd] = self.bus.read16(address) as i16 as u32,
         };
     }
 
@@ -228,12 +233,17 @@ impl Arm7TDMI {
         let offset = (opcode as u32 >> 6) & 0x1F;
 
         let address = self.regs[rb] + (offset << if B { 0 } else { 2 });
+        let (aligned_addr, ror) = if !B && address % 4 != 0 {
+            (address & !3, (address & 3) * 8)
+        } else {
+            (address, 0)
+        };
 
         if L {
             self.regs[rd] = if B {
                 self.bus.read8(address) as u32
             } else {
-                self.bus.read32(address)
+                self.bus.read32(aligned_addr).rotate_right(ror)
             };
         } else {
             match B {
@@ -277,7 +287,7 @@ impl Arm7TDMI {
         let rd = (opcode as usize >> 8) & 0x7;
 
         self.regs[rd] = match SP {
-            false => ((self.regs[15] + 4) & !1) + (offset << 2),
+            false => ((self.regs[15] + 4) & !2) + (offset << 2),
             true => self.regs[13] + (offset << 2),
         };
     }
