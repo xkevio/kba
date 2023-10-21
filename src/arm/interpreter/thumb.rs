@@ -157,19 +157,24 @@ impl Arm7TDMI {
                 self.cpsr.set_state(State::Arm);
             } else {
                 self.cpsr.set_state(State::Thumb);
-                self.branch = true;
             }
 
+            self.branch = true;
             return;
         }
 
         let dst = if !h1 { rd } else { rd + 8 };
         let src = if !h2 { rs } else { rs + 8 };
-        let pc = if rs == 15 { 4 } else { 0 };
+        let pc = if src == 15 { 4 } else { 0 };
 
         self.regs[dst] = match op {
             0b00 => self.regs[dst] + self.regs[src] + pc,
             0b01 => { fl!(self.regs[dst], self.regs[src] + pc, -, self, cpsr); self.regs[dst] },
+            0b10 if dst == 15 => {
+                self.branch = true;
+                (self.regs[src] + pc) & !1
+            },
+            0b10 if src == 15 => (self.regs[src] + pc) & !1,
             0b10 => self.regs[src] + pc,
             _ => unreachable!(),
         };

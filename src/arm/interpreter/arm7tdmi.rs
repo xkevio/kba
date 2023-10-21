@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, array};
 
 use crate::{fl, mmu::bus::Bus, mmu::Mcu};
 use proc_bitfield::{bitfield, ConvRaw};
@@ -94,34 +94,38 @@ impl From<State> for bool {
 
 impl Arm7TDMI {
     /// Initialize SP and PC to the correct values or, if `skip_crt0`, additional registers.
-    pub fn setup_registers(skip_crt0: bool) -> Self {
+    pub fn setup_registers(_skip_crt0: bool) -> Self {
         let mut regs = [0; 16];
 
-        // temp crt0 skip
-        if skip_crt0 {
-            regs[2] = 0x0200_0000;
-            regs[3] = 0x0800_02D8;
-            regs[4] = 0x0200_0000;
-            regs[13] = 0x0300_7F00;
-            regs[14] = 0x0800_0187;
-            regs[15] = 0x0800_02D8;
-        } else {
-            regs[13] = 0x0300_7F00;
-            regs[15] = 0x0800_0000;
-        }
+        // Skip BIOS.
+        regs[13] = 0x0300_7F00;
+        regs[15] = 0x0800_0000;
+
+        // Set other modes r13 (SP) and SPSR.
+        let banks = HashMap::from([
+            (Mode::System, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7F00 } else { 0 }))),
+            (Mode::Irq, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FA0 } else { 0 }))),
+            (Mode::Supervisor, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FE0 } else { 0 }))),
+            (Mode::Fiq, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
+            (Mode::Abort, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
+            (Mode::Undefined, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
+        ]);
 
         Self {
             regs,
             cpsr: Cpsr(0x6000_001F),
+            banked_regs: banks,
             ..Default::default()
         }
     }
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
+        // println!("{:X?}", self.regs);
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
+                println!("{opcode:X}");
 
                 let cond = (opcode & 0xF000_0000) >> 28;
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
@@ -137,7 +141,13 @@ impl Arm7TDMI {
         }
 
         self.regs[15] += match self.cpsr.state() {
-            State::Arm => 4,
+            State::Arm => {
+                if self.branch {
+                    0
+                } else {
+                    4
+                }
+            }
             State::Thumb => {
                 if self.branch {
                     0
@@ -200,7 +210,7 @@ impl Arm7TDMI {
             0b0110 => self.cpsr.v(),
             0b0111 => !self.cpsr.v(),
             0b1000 => self.cpsr.c() && !self.cpsr.z(),
-            0b1001 => self.cpsr.c() && self.cpsr.z(),
+            0b1001 => !self.cpsr.c() || self.cpsr.z(),
             0b1010 => self.cpsr.n() == self.cpsr.v(),
             0b1011 => self.cpsr.n() != self.cpsr.v(),
             0b1100 => !self.cpsr.z() && (self.cpsr.n() == self.cpsr.v()),
@@ -230,12 +240,12 @@ impl Arm7TDMI {
         let result = match operation {
             0b0000 => rn & op2,
             0b0001 => rn ^ op2,
-            0b0010 => fl!(rn, op2, -, self, cpsr),
-            0b0011 => fl!(op2, rn, -, self, cpsr),
-            0b0100 => fl!(rn, op2, +, self, cpsr),
-            0b0101 => fl!(rn, op2 + self.cpsr.c() as u32, +, self, cpsr),
-            0b0110 => fl!(rn, op2, self.cpsr.c() as u32 - 1, -, self, cpsr),
-            0b0111 => fl!(op2, rn, self.cpsr.c() as u32 - 1, -, self, cpsr),
+            0b0010 => fl!(rn, op2, -, self, cpsr, S),
+            0b0011 => fl!(op2, rn, -, self, cpsr, S),
+            0b0100 => fl!(rn, op2, +, self, cpsr, S),
+            0b0101 => fl!(rn, op2 + self.cpsr.c() as u32, +, self, cpsr, S),
+            0b0110 => fl!(rn, op2, self.cpsr.c() as u32 - 1, -, self, cpsr, S),
+            0b0111 => fl!(op2, rn, self.cpsr.c() as u32 - 1, -, self, cpsr, S),
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
             0b1010 => {is_intmd = true; fl!(rn, op2, -, self, cpsr)},
@@ -249,8 +259,12 @@ impl Arm7TDMI {
 
         if S {
             if rd == 15 {
-                self.cpsr
-                    .set_cpsr(self.banked_regs[&self.cpsr.mode().unwrap()].0.cpsr());
+                self.cpsr.set_cpsr(
+                    self.banked_regs
+                        .get(&self.cpsr.mode().unwrap())
+                        .map(|b| b.0.cpsr())
+                        .unwrap_or_default(),
+                );
             } else {
                 // Set Zero flag iff result is all zeros.
                 self.cpsr.set_z(result == 0);
@@ -270,11 +284,8 @@ impl Arm7TDMI {
 
         // FIXME: temporary check for mov r15, r1-r13.
         if !is_intmd {
-            self.regs[rd] = if rd == 15 && (opcode & 0xF) != 14 && operation == 0b1101 {
-                result - 4
-            } else {
-                result
-            };
+            if rd == 15 { self.branch = true; }
+            self.regs[rd] = result;
         }
     }
 
@@ -286,9 +297,6 @@ impl Arm7TDMI {
         let rm = self.regs[opcode as usize & 0xF];
         let rs = self.regs[(opcode as usize & 0x0F00) >> 8];
         let rn = self.regs[(opcode as usize & 0xF000) >> 12];
-
-        assert_ne!(rd, 15);
-        assert_ne!(rd, opcode as usize & 0xF);
 
         self.regs[rd] = rm * rs + (rn * acc as u32);
 
@@ -416,8 +424,8 @@ impl Arm7TDMI {
                     self.cpsr = source_psr;
                 }
 
-                if current_mode as u32 != (rm & 0x1F) {
-                    self.swap_regs(current_mode, Mode::try_from(rm & 0x1F).unwrap());
+                if current_mode as u32 != (rm & 0x1F) && opcode & (1 << 22) == 0 {
+                    self.swap_regs(current_mode, Mode::try_from(rm & 0x1F).expect(&format!("{:X}", opcode)));
                     self.cpsr.set_mode(Mode::try_from(rm & 0x1F).unwrap());
                 }
 
@@ -448,7 +456,9 @@ impl Arm7TDMI {
         self.cpsr.set_mode(Mode::Supervisor);
 
         self.spsr = self.cpsr;
-        self.regs[14] = self.regs[15];
+        self.branch = true;
+
+        self.regs[14] = self.regs[15] + 4;
         self.regs[15] = 0x08;
     }
 
@@ -651,8 +661,10 @@ impl Arm7TDMI {
                     (rm, self.cpsr.c())
                 } else if amount < 32 {
                     (rm << amount, rm & (1 << (32 - amount)) != 0)
-                } else {
+                } else if amount == 32 {
                     (0, (rm & 1) != 0)
+                } else {
+                    (0, false)
                 }
             }
         }
@@ -674,6 +686,8 @@ impl Arm7TDMI {
                     (rm, self.cpsr.c())
                 } else if amount < 32 {
                     (rm >> amount, rm & (1 << (amount - 1)) != 0)
+                } else if amount == 32 {
+                    (0, (rm >> 31) != 0)
                 } else {
                     (0, false)
                 }
