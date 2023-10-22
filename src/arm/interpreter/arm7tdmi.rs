@@ -125,7 +125,6 @@ impl Arm7TDMI {
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
-                println!("{opcode:X}");
 
                 let cond = (opcode & 0xF000_0000) >> 28;
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
@@ -141,20 +140,9 @@ impl Arm7TDMI {
         }
 
         self.regs[15] += match self.cpsr.state() {
-            State::Arm => {
-                if self.branch {
-                    0
-                } else {
-                    4
-                }
-            }
-            State::Thumb => {
-                if self.branch {
-                    0
-                } else {
-                    2
-                }
-            }
+            State::Arm if !self.branch => 4,
+            State::Thumb if !self.branch => 2,
+            _ => 0,
         };
 
         self.branch = false;
