@@ -36,7 +36,7 @@ macro_rules! fl {
 
     // SBC, RSC
     ($a:expr, $b:expr, $c:expr, -, $self:ident, $cpsr:ident $(, $S:expr)?) => {{
-        let res = $a - $b + $c;
+        let res = $a - ($b + $c);
         let set_flags = true $(&& $S)?;
 
         if set_flags {

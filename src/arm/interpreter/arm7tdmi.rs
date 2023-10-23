@@ -121,7 +121,8 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        // println!("{:X?}", self.regs);
+        // print!("{:X?}", self.regs);
+        // println!(" | {:X}", self.cpsr.cpsr());
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -154,10 +155,10 @@ impl Arm7TDMI {
     /// Otherwise, it is an unsigned 8 bit immediate value.
     pub fn barrel_shifter<const I: bool>(&self, op: u16) -> (u32, bool) {
         if I {
-            (
-                ((op & 0xFF) as u32).rotate_right(((op as u32 & 0x0F00) >> 8) * 2),
-                false,
-            )
+            let ror = (op as u32 >> 8) & 0xF;
+            let res = (op as u32 & 0xFF).rotate_right(ror * 2);
+            let c = if ror == 0 { self.cpsr.c() } else { (res >> 31) != 0 };
+            (res, c)
         } else {
             let mut rm = if (op as usize & 0xF) == 15 {
                 self.regs[op as usize & 0xF] + 8
@@ -232,8 +233,8 @@ impl Arm7TDMI {
             0b0011 => fl!(op2, rn, -, self, cpsr, S),
             0b0100 => fl!(rn, op2, +, self, cpsr, S),
             0b0101 => fl!(rn, op2 + self.cpsr.c() as u32, +, self, cpsr, S),
-            0b0110 => fl!(rn, op2, self.cpsr.c() as u32 - 1, -, self, cpsr, S),
-            0b0111 => fl!(op2, rn, self.cpsr.c() as u32 - 1, -, self, cpsr, S),
+            0b0110 => fl!(rn, op2, !self.cpsr.c() as u32, -, self, cpsr, S),
+            0b0111 => fl!(op2, rn, !self.cpsr.c() as u32, -, self, cpsr, S),
             0b1000 => {is_intmd = true; rn & op2},
             0b1001 => {is_intmd = true; rn ^ op2},
             0b1010 => {is_intmd = true; fl!(rn, op2, -, self, cpsr)},
@@ -247,12 +248,7 @@ impl Arm7TDMI {
 
         if S {
             if rd == 15 {
-                self.cpsr.set_cpsr(
-                    self.banked_regs
-                        .get(&self.cpsr.mode().unwrap())
-                        .map(|b| b.0.cpsr())
-                        .unwrap_or_default(),
-                );
+                self.cpsr.set_cpsr(self.spsr.cpsr());
             } else {
                 // Set Zero flag iff result is all zeros.
                 self.cpsr.set_z(result == 0);
@@ -270,9 +266,9 @@ impl Arm7TDMI {
             }
         }
 
-        // FIXME: temporary check for mov r15, r1-r13.
+        // Don't set result in rd when opcode is CMP, TST, TEQ, CMN.
         if !is_intmd {
-            if rd == 15 { self.branch = true; }
+            self.branch = rd == 15;
             self.regs[rd] = result;
         }
     }
@@ -352,13 +348,12 @@ impl Arm7TDMI {
         self.regs[15] = rn & !1;
 
         // Bit 0 of Rn decides decoding of subsequent instructions.
-        if rn & 1 == 0 {
-            self.cpsr.set_state(State::Arm);
-            self.regs[15] -= 4;
-        } else {
-            self.cpsr.set_state(State::Thumb);
-            self.regs[15] -= 2;
-        }
+        match rn & 1 == 0 {
+            true => self.cpsr.set_state(State::Arm),
+            false => self.cpsr.set_state(State::Thumb),
+        };
+
+        self.branch = true;
     }
 
     /// Branch and Link.
@@ -372,12 +367,12 @@ impl Arm7TDMI {
             ioffset & 0x00FF_FFFF
         } as i32;
 
-        // TODO: r15 offset adjustment (+4 in cycle or here???)
         if link {
-            self.regs[14] = self.regs[15];
+            self.regs[14] = self.regs[15] + 4;
         }
 
-        self.regs[15] = self.regs[15].wrapping_add_signed(ioffset + 4);
+        self.branch = true;
+        self.regs[15] = ((self.regs[15] + 8).wrapping_add_signed(ioffset)) & !3;
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
@@ -395,7 +390,12 @@ impl Arm7TDMI {
         }
         // MSR (transfer register contents to PSR)
         else if (opcode & 0x000F_0000) >> 16 == 0b1001 {
-            let rm = self.regs[opcode as usize & 0xF];
+            // let rm = self.regs[opcode as usize & 0xF];
+            let rm = if !I {
+                self.regs[opcode as usize & 0xF]
+            } else {
+                self.barrel_shifter::<I>(opcode as u16).0
+            };
             let Ok(current_mode) = self.cpsr.mode() else {
                 return;
             };
@@ -403,7 +403,7 @@ impl Arm7TDMI {
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
                 source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
             } else {
-                source_psr.set_cpsr(rm);
+                source_psr.set_cpsr((rm & 0xF000_00FF) | (source_psr.cpsr() & 0x0FFF_FF00));
 
                 // TODO: make generic
                 if opcode & (1 << 22) != 0 {
@@ -413,6 +413,8 @@ impl Arm7TDMI {
                 }
 
                 if current_mode as u32 != (rm & 0x1F) && opcode & (1 << 22) == 0 {
+                    // dbg!(rm);
+                    // dbg!(current_mode);
                     self.swap_regs(current_mode, Mode::try_from(rm & 0x1F).expect(&format!("{:X}", opcode)));
                     self.cpsr.set_mode(Mode::try_from(rm & 0x1F).unwrap());
                 }
@@ -440,6 +442,7 @@ impl Arm7TDMI {
 
     /// Software Interrupt.
     pub fn swi(&mut self, _opcode: u32) {
+        // println!("{:X}", self.cpsr.cpsr());
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
         self.cpsr.set_mode(Mode::Supervisor);
 
@@ -499,10 +502,11 @@ impl Arm7TDMI {
 
             self.regs[rd] = val.rotate_right(ror);
         } else {
+            let addr = if rd == 15 { self.regs[rd] + 12 } else { self.regs[rd] };
             if B {
-                self.bus.write8(address, self.regs[rd] as u8);
+                self.bus.write8(address, addr as u8);
             } else {
-                self.bus.write32(address, self.regs[rd]);
+                self.bus.write32(address, addr);
             }
         }
 
@@ -625,6 +629,8 @@ impl Arm7TDMI {
                 address = if U { address + 4 } else { address - 4 };
             }
         }
+
+        self.branch = L && reg_list.contains(&15);
 
         // Writeback if W or Post and if Load but rn not in list or if Store.
         if (W || !P) && !(L && reg_list.contains(&rn)) {
