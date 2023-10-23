@@ -121,7 +121,7 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        // print!("{:X?}", self.regs);
+        println!("{:X?}", self.regs);
         // println!(" | {:X}", self.cpsr.cpsr());
         match self.cpsr.state() {
             State::Arm => {
@@ -219,8 +219,12 @@ impl Arm7TDMI {
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
         // If operand is PC, add 8.
-        let rn = if (opcode as usize & 0x000F_0000) >> 16 == 15 {
-            rn + 8
+        let rn = if (opcode & 0x000F_0000) >> 16 == 15 {
+            if !I && (opcode & (1 << 4)) != 0 {
+                rn + 12
+            } else {
+                rn + 8
+            }
         } else {
             rn
         };
@@ -248,7 +252,13 @@ impl Arm7TDMI {
 
         if S {
             if rd == 15 {
-                self.cpsr.set_cpsr(self.spsr.cpsr());
+                if !self.cpsr.mode().is_ok_and(|m| m == Mode::User || m == Mode::System) {
+                    let spsr = self.spsr;
+                    if self.cpsr.mode() != self.spsr.mode() {
+                        self.swap_regs(self.cpsr.mode().unwrap(), self.spsr.mode().unwrap());
+                    }
+                    self.cpsr.set_cpsr(spsr.cpsr());
+                }
             } else {
                 // Set Zero flag iff result is all zeros.
                 self.cpsr.set_z(result == 0);
@@ -376,73 +386,62 @@ impl Arm7TDMI {
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
-    pub fn psr_transfer<const I: bool>(&mut self, opcode: u32) {
-        let mut source_psr = if opcode & (1 << 22) != 0 {
-            self.spsr
-        } else {
-            self.cpsr
+    pub fn psr_transfer<const I: bool, const PSR: bool>(&mut self, opcode: u32) {
+        let mut source_psr = match PSR {
+            true => self.spsr,
+            false => self.cpsr,
         };
 
         // MRS (transfer PSR contents to register)
-        if (opcode & 0x000F_0000) >> 16 == 0b1111 {
+        if (opcode & (1 << 21)) == 0 {
             let rd = (opcode as usize & 0xF000) >> 12;
             self.regs[rd] = source_psr.cpsr();
         }
-        // MSR (transfer register contents to PSR)
-        else if (opcode & 0x000F_0000) >> 16 == 0b1001 {
-            // let rm = self.regs[opcode as usize & 0xF];
+        // MSR (transfer register contents to PSR, or #imm/#reg to flag bits)
+        else {
             let rm = if !I {
                 self.regs[opcode as usize & 0xF]
             } else {
                 self.barrel_shifter::<I>(opcode as u16).0
             };
+
+            // Get current mode before possible CPSR change.
             let Ok(current_mode) = self.cpsr.mode() else {
                 return;
             };
 
+            // User mode can only change flag bits.
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
                 source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
             } else {
-                source_psr.set_cpsr((rm & 0xF000_00FF) | (source_psr.cpsr() & 0x0FFF_FF00));
-
-                // TODO: make generic
-                if opcode & (1 << 22) != 0 {
-                    self.spsr = source_psr;
-                } else {
-                    self.cpsr = source_psr;
+                // Set flag bits.
+                if opcode & (1 << 19) != 0 {
+                    source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
                 }
-
-                if current_mode as u32 != (rm & 0x1F) && opcode & (1 << 22) == 0 {
-                    // dbg!(rm);
-                    // dbg!(current_mode);
-                    self.swap_regs(current_mode, Mode::try_from(rm & 0x1F).expect(&format!("{:X}", opcode)));
-                    self.cpsr.set_mode(Mode::try_from(rm & 0x1F).unwrap());
+                // Set control bits.
+                if opcode & (1 << 16) != 0 {
+                    source_psr.set_cpsr((rm & 0x7F) | (source_psr.cpsr() & !0x7F));
                 }
-
-                return;
             }
-        }
-        // MSR (transfer register contents or immediate to PSR flag bits)
-        else {
-            let contents = if !I {
-                self.regs[opcode as usize & 0xF]
-            } else {
-                self.barrel_shifter::<I>(opcode as u16).0
-            };
 
-            source_psr.set_cpsr((contents & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
-        }
+            // Assign to correct PSR.
+            match PSR {
+                true => self.spsr = source_psr,
+                false => self.cpsr = source_psr,
+            }
 
-        if opcode & (1 << 22) != 0 {
-            self.spsr = source_psr;
-        } else {
-            self.cpsr = source_psr;
+            // If PSR = CPSR and modes differ and control bits get set, change mode.
+            if let Ok(new_mode) = Mode::try_from(rm & 0x1F) {
+                if !PSR && current_mode as u32 != (rm & 0x1F) && opcode & (1 << 16) != 0 {
+                    self.swap_regs(current_mode, new_mode);
+                    self.cpsr.set_mode(new_mode);
+                }
+            }
         }
     }
 
     /// Software Interrupt.
     pub fn swi(&mut self, _opcode: u32) {
-        // println!("{:X}", self.cpsr.cpsr());
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
         self.cpsr.set_mode(Mode::Supervisor);
 
@@ -486,31 +485,31 @@ impl Arm7TDMI {
             self.regs[rn] + pc
         };
 
+        let (aligned_addr, ror) = if !B && address % 4 != 0 {
+            (address & !3, (address & 3) * 8)
+        } else {
+            (address, 0)
+        };
+
         // Load from memory if L, else store register into memory.
         if L {
-            let (align, ror) = if !B && address % 4 != 0 {
-                (address & !3, (address & 3) * 8)
-            } else {
-                (address, 0)
-            };
-
-            let val = if B {
+            self.branch = rd == 15;
+            self.regs[rd] = if B {
                 self.bus.read8(address) as u32
             } else {
-                self.bus.read32(align)
+                self.bus.read32(aligned_addr).rotate_right(ror)
             };
-
-            self.regs[rd] = val.rotate_right(ror);
         } else {
-            let addr = if rd == 15 { self.regs[rd] + 12 } else { self.regs[rd] };
+            let data = if rd == 15 { self.regs[rd] + 12 } else { self.regs[rd] };
             if B {
-                self.bus.write8(address, addr as u8);
+                self.bus.write8(address, data as u8);
             } else {
-                self.bus.write32(address, addr);
+                self.bus.write32(aligned_addr, data);
             }
         }
 
-        if (W || !P) && (rn != rd) {
+        // TODO: simplify lmao
+        if (((W || !P) && (rn != rd) && L)) || (!L && (W || !P)) {
             self.regs[rn] = base_with_offset;
         }
     }
@@ -561,7 +560,6 @@ impl Arm7TDMI {
                 }
             }
         } else {
-            assert_eq!(S, false);
             self.bus.write16(address, self.regs[rd] as u16);
         }
 

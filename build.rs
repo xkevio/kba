@@ -87,7 +87,8 @@ fn decode_arm(index: u16) -> String {
         )
     } else if index & 0b1101_1001_0000 == 0b0001_0000_0000 {
         let imm = index & (1 << 9) != 0;
-        format!("Arm7TDMI::psr_transfer::<{}>", imm)
+        let psr = index & (1 << 6) != 0;
+        format!("Arm7TDMI::psr_transfer::<{}, {}>", imm, psr)
     } else if index & 0b1100_0000_0000 == 0b0000_0000_0000 {
         let imm = index & (1 << 9) != 0;
         let s_bit = index & (1 << 4) != 0;
