@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{arm::arr_with, fl, mmu::bus::Bus, mmu::Mcu};
+use crate::{
+    arm::arr_with,
+    fl,
+    mmu::{bus::Bus, Mcu},
+};
 use proc_bitfield::{bitfield, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
@@ -93,8 +97,8 @@ impl From<State> for bool {
 }
 
 impl Arm7TDMI {
-    /// Initialize SP and PC to the correct values or, if `skip_crt0`, additional registers.
-    pub fn setup_registers(_skip_crt0: bool) -> Self {
+    /// Initialize SP and PC to the correct values or, if `skip_bios`, additional registers.
+    pub fn new(_skip_bios: bool) -> Self {
         let mut regs = [0; 16];
 
         // Skip BIOS.
@@ -125,7 +129,7 @@ impl Arm7TDMI {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
 
-                let cond = (opcode & 0xF000_0000) >> 28;
+                let cond = (opcode >> 28) & 0xF;
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
                 if self.cond(cond as u8) {

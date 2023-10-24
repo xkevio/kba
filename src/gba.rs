@@ -14,21 +14,20 @@ pub struct Gba {
 impl Gba {
     pub fn with_rom(rom: &[u8]) -> Self {
         Self {
+            cpu: Arm7TDMI::new(false),
             rom: rom.to_vec(),
-            cpu: Arm7TDMI::setup_registers(false),
             ..Default::default()
         }
     }
 
     pub fn run(&mut self) {
+        // TODO: handle irqs between instructions.
+
         self.cpu.cycle();
         self.cpu
             .bus
-            .io
             .ppu
             .cycle(&*self.cpu.bus.vram, &self.cpu.bus.palette_ram);
-
-        // self.cpu.bus.io.handle_irq(&mut self.cpu);
 
         self.cycles += 1;
     }

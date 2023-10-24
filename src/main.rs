@@ -50,12 +50,12 @@ fn main() -> SdlResult<()> {
             match event {
                 Event::Quit { .. } => break 'main,
                 Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Return) => kba.cpu.bus.io.key_input.set_start(false),
-                    Some(Keycode::Tab) => kba.cpu.bus.io.key_input.set_select(false),
-                    Some(Keycode::Up) => kba.cpu.bus.io.key_input.set_up(false),
-                    Some(Keycode::Down) => kba.cpu.bus.io.key_input.set_down(false),
-                    Some(Keycode::Right) => kba.cpu.bus.io.key_input.set_right(false),
-                    Some(Keycode::Left) => kba.cpu.bus.io.key_input.set_left(false),
+                    Some(Keycode::Return) => kba.cpu.bus.key_input.set_start(false),
+                    Some(Keycode::Tab) => kba.cpu.bus.key_input.set_select(false),
+                    Some(Keycode::Up) => kba.cpu.bus.key_input.set_up(false),
+                    Some(Keycode::Down) => kba.cpu.bus.key_input.set_down(false),
+                    Some(Keycode::Right) => kba.cpu.bus.key_input.set_right(false),
+                    Some(Keycode::Left) => kba.cpu.bus.key_input.set_left(false),
                     Some(_) => {}
                     None => unreachable!(),
                 },
@@ -70,7 +70,7 @@ fn main() -> SdlResult<()> {
 
         // Update frame and treat everything as BG Mode 3 or 4 for now.
         texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-            for (i, px) in kba.cpu.bus.io.ppu.buffer.iter().enumerate() {
+            for (i, px) in kba.cpu.bus.ppu.buffer.iter().enumerate() {
                 let [r, g, b, a] = rgb555_to_color(*px).to_be_bytes();
                 buffer[i * 4] = r;
                 buffer[i * 4 + 1] = g;
@@ -80,7 +80,7 @@ fn main() -> SdlResult<()> {
         })?;
 
         kba.cycles = 0;
-        kba.cpu.bus.io.key_input.set_keyinput(0xFFFF);
+        kba.cpu.bus.key_input.set_keyinput(0xFFFF);
 
         canvas.clear();
         canvas.copy(&texture, None, None)?;
