@@ -28,6 +28,8 @@ impl Gba {
             .ppu
             .cycle(&*self.cpu.bus.vram, &self.cpu.bus.palette_ram);
 
+        // self.cpu.bus.io.handle_irq(&mut self.cpu);
+
         self.cycles += 1;
     }
 }

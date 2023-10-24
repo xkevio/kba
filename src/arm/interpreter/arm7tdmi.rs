@@ -23,12 +23,12 @@ pub struct Arm7TDMI {
     pub bus: Bus,
 
     /// Saved Program Status Register for all modes but User.
-    spsr: Spsr,
+    pub spsr: Spsr,
     /// The other banked registers of the other modes.
     banked_regs: HashMap<Mode, BankedRegisters>,
 
     /// If the prev. instruction directly **set** r15.
-    pub(super) branch: bool,
+    pub branch: bool,
 }
 
 #[derive(PartialEq)]
