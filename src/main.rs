@@ -21,7 +21,6 @@ fn main() -> SdlResult<()> {
     let rom = std::fs::read(&rom_path).map_err(|e| e.to_string())?;
 
     let mut kba = Gba::with_rom(&rom);
-    kba.cpu.bus.game_pak.rom = rom;
 
     let sdl_context = sdl2::init()?;
     let video_subsystem = sdl_context.video()?;

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     arm::arr_with,
     fl,
-    mmu::{bus::Bus, Mcu},
+    mmu::{bus::Bus, game_pak::GamePak, Mcu},
 };
 use proc_bitfield::{bitfield, ConvRaw};
 
@@ -27,12 +27,12 @@ pub struct Arm7TDMI {
     pub bus: Bus,
 
     /// Saved Program Status Register for all modes but User.
-    pub spsr: Spsr,
+    spsr: Spsr,
     /// The other banked registers of the other modes.
     banked_regs: HashMap<Mode, BankedRegisters>,
 
     /// If the prev. instruction directly **set** r15.
-    pub branch: bool,
+    pub(super) branch: bool,
 }
 
 #[derive(PartialEq)]
@@ -97,16 +97,25 @@ impl From<State> for bool {
 }
 
 impl Arm7TDMI {
-    /// Initialize SP and PC to the correct values or, if `skip_bios`, additional registers.
-    pub fn new(_skip_bios: bool) -> Self {
+    /// Initialize SP and PC to the correct values.
+    pub fn new(rom: &[u8]) -> Self {
         let mut regs = [0; 16];
+
+        // Initialize GamePak memory.
+        let bus = Bus {
+            game_pak: GamePak {
+                rom: rom.to_vec(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         // Skip BIOS.
         regs[13] = 0x0300_7F00;
         regs[15] = 0x0800_0000;
 
         // Set other modes r13 (SP) and SPSR.
-        let banks = HashMap::from([
+        let banked_regs = HashMap::from([
             (Mode::System, (Cpsr(0), arr_with(13, 0x0300_7F00))),
             (Mode::Irq, (Cpsr(0), arr_with(13, 0x0300_7FA0))),
             (Mode::Supervisor, (Cpsr(0), arr_with(13, 0x0300_7FE0))),
@@ -118,7 +127,8 @@ impl Arm7TDMI {
         Self {
             regs,
             cpsr: Cpsr(0x6000_001F),
-            banked_regs: banks,
+            bus,
+            banked_regs,
             ..Default::default()
         }
     }

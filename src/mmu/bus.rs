@@ -106,7 +106,7 @@ impl Mcu for Bus {
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
-            _ => eprintln!("Write to ROM: {}", format!("{address:X?}")),
+            _ => eprintln!("Write to ROM: {address:X}"),
         }
     }
 }

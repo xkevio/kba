@@ -7,14 +7,13 @@ pub const LCD_HEIGHT: usize = 160;
 pub struct Gba {
     pub cpu: Arm7TDMI,
     pub cycles: usize,
-
     rom: Vec<u8>,
 }
 
 impl Gba {
     pub fn with_rom(rom: &[u8]) -> Self {
         Self {
-            cpu: Arm7TDMI::new(false),
+            cpu: Arm7TDMI::new(rom),
             rom: rom.to_vec(),
             ..Default::default()
         }

@@ -3,6 +3,7 @@ use super::Mcu;
 #[derive(Default)]
 pub struct GamePak {
     pub rom: Vec<u8>,
+    pub sram: Vec<u8>,
 }
 
 impl Mcu for GamePak {
