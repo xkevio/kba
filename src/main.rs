@@ -14,7 +14,10 @@ type SdlResult<T> = Result<T, String>;
 
 fn main() -> SdlResult<()> {
     let rom_path = std::env::args().nth(1).expect("A rom has to be specified!");
-    let file_name = Path::new(&rom_path).file_name().and_then(|r| r.to_str()).unwrap_or_default();
+    let file_name = Path::new(&rom_path)
+        .file_name()
+        .and_then(|r| r.to_str())
+        .unwrap_or_default();
     let rom = std::fs::read(&rom_path).map_err(|e| e.to_string())?;
 
     let mut kba = Gba::with_rom(&rom);
@@ -24,7 +27,11 @@ fn main() -> SdlResult<()> {
     let video_subsystem = sdl_context.video()?;
 
     let window = video_subsystem
-        .window(&format!("κba - {}", file_name), LCD_WIDTH as u32 * 2, LCD_HEIGHT as u32 * 2)
+        .window(
+            &format!("κba - {}", file_name),
+            LCD_WIDTH as u32 * 2,
+            LCD_HEIGHT as u32 * 2,
+        )
         .position_centered()
         .build()
         .map_err(|e| e.to_string())?;

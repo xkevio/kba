@@ -108,7 +108,7 @@ fn decode_arm(index: u16) -> String {
     } else if index & 0b1111_0000_0000 == 0b1111_0000_0000 {
         format!("Arm7TDMI::swi")
     } else {
-        format!("Arm7TDMI::dummy")
+        format!("Arm7TDMI::undefined")
     }
 }
 
@@ -170,6 +170,6 @@ fn decode_thumb(index: u8) -> String {
         let h_bit = index & (1 << 3) != 0;
         format!("Arm7TDMI::long_branch::<{}>", h_bit)
     } else {
-        format!("Arm7TDMI::t_dummy")
+        format!("Arm7TDMI::t_undefined")
     }
 }

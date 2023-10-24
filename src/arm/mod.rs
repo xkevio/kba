@@ -1,5 +1,12 @@
 pub mod interpreter;
 
+/// Fill array with `N` default values besides index `i` which gets `val`.
+pub fn arr_with<const N: usize, T: Copy + Default>(i: usize, val: T) -> [T; N] {
+    let mut arr = [T::default(); N];
+    arr[i] = val;
+    arr
+}
+
 /// Set V (overflow) and C (carry) flag and save repetition.
 ///
 /// - Set C to carry out of bit31 in ALU.

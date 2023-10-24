@@ -1,6 +1,6 @@
-use std::{collections::HashMap, array};
+use std::collections::HashMap;
 
-use crate::{fl, mmu::bus::Bus, mmu::Mcu};
+use crate::{arm::arr_with, fl, mmu::bus::Bus, mmu::Mcu};
 use proc_bitfield::{bitfield, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
@@ -103,12 +103,12 @@ impl Arm7TDMI {
 
         // Set other modes r13 (SP) and SPSR.
         let banks = HashMap::from([
-            (Mode::System, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7F00 } else { 0 }))),
-            (Mode::Irq, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FA0 } else { 0 }))),
-            (Mode::Supervisor, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FE0 } else { 0 }))),
-            (Mode::Fiq, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
-            (Mode::Abort, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
-            (Mode::Undefined, (Cpsr(0), array::from_fn(|i| if i == 13 { 0x0300_7FF0 } else { 0 }))),
+            (Mode::System, (Cpsr(0), arr_with(13, 0x0300_7F00))),
+            (Mode::Irq, (Cpsr(0), arr_with(13, 0x0300_7FA0))),
+            (Mode::Supervisor, (Cpsr(0), arr_with(13, 0x0300_7FE0))),
+            (Mode::Fiq, (Cpsr(0), arr_with(13, 0x0300_7FF0))),
+            (Mode::Abort, (Cpsr(0), arr_with(13, 0x0300_7FF0))),
+            (Mode::Undefined, (Cpsr(0), arr_with(13, 0x0300_7FF0))),
         ]);
 
         Self {
@@ -121,8 +121,6 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        println!("{:X?}", self.regs);
-        // println!(" | {:X}", self.cpsr.cpsr());
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -157,7 +155,11 @@ impl Arm7TDMI {
         if I {
             let ror = (op as u32 >> 8) & 0xF;
             let res = (op as u32 & 0xFF).rotate_right(ror * 2);
-            let c = if ror == 0 { self.cpsr.c() } else { (res >> 31) != 0 };
+            let c = if ror == 0 {
+                self.cpsr.c()
+            } else {
+                (res >> 31) != 0
+            };
             (res, c)
         } else {
             let mut rm = if (op as usize & 0xF) == 15 {
@@ -252,7 +254,11 @@ impl Arm7TDMI {
 
         if S {
             if rd == 15 {
-                if !self.cpsr.mode().is_ok_and(|m| m == Mode::User || m == Mode::System) {
+                if !self
+                    .cpsr
+                    .mode()
+                    .is_ok_and(|m| m == Mode::User || m == Mode::System)
+                {
                     let spsr = self.spsr;
                     if self.cpsr.mode() != self.spsr.mode() {
                         self.swap_regs(self.cpsr.mode().unwrap(), self.spsr.mode().unwrap());
@@ -334,14 +340,14 @@ impl Arm7TDMI {
 
         match B {
             false => {
-                let (aligned_address, data_ror) = if rn % 4 != 0 {
+                let (aligned_addr, data_ror) = if rn % 4 != 0 {
                     (rn & !3, (rn & 3) * 8)
                 } else {
                     (rn, 0)
                 };
 
-                let swp_content = self.bus.read32(aligned_address);
-                self.bus.write32(rn, rm);
+                let swp_content = self.bus.read32(aligned_addr);
+                self.bus.write32(aligned_addr, rm);
                 self.regs[rd] = swp_content.rotate_right(data_ror);
             }
             true => {
@@ -500,7 +506,11 @@ impl Arm7TDMI {
                 self.bus.read32(aligned_addr).rotate_right(ror)
             };
         } else {
-            let data = if rd == 15 { self.regs[rd] + 12 } else { self.regs[rd] };
+            let data = if rd == 15 {
+                self.regs[rd] + 12
+            } else {
+                self.regs[rd]
+            };
             if B {
                 self.bus.write8(address, data as u8);
             } else {
@@ -509,12 +519,12 @@ impl Arm7TDMI {
         }
 
         // TODO: simplify lmao
-        if (((W || !P) && (rn != rd) && L)) || (!L && (W || !P)) {
+        if ((W || !P) && (rn != rd) && L) || (!L && (W || !P)) {
             self.regs[rn] = base_with_offset;
         }
     }
 
-    /// LDRH/STRH and LDRSB/LDRSH (TODO: align)
+    /// LDRH/STRH and LDRSB/LDRSH
     pub fn hw_signed_data_transfer<
         const I: bool,
         const P: bool,
@@ -542,33 +552,33 @@ impl Arm7TDMI {
         };
 
         let address = if P { base_with_offset } else { self.regs[rn] };
+        let (aligned_addr, ror) = if address % 2 != 0 {
+            (address & !1, 8)
+        } else {
+            (address, 0)
+        };
 
         // Load from memory if L, else store register into memory.
         if L {
             if !S {
-                self.regs[rd] = self.bus.read16(address) as u32;
+                self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror);
             } else {
                 self.regs[rd] = match H {
-                    false => {
-                        let sb = self.bus.read8(address);
-                        sb as i8 as u32
-                    }
-                    true => {
-                        let shw = self.bus.read16(address);
-                        shw as i16 as u32
-                    }
+                    false => self.bus.read8(address) as i8 as u32,
+                    true if address % 2 != 0 => self.bus.read8(address) as i8 as u32,
+                    true => self.bus.read16(address) as i16 as u32,
                 }
             }
         } else {
-            self.bus.write16(address, self.regs[rd] as u16);
+            self.bus.write16(aligned_addr, self.regs[rd] as u16);
         }
 
-        if (W || !P) && (rn != rd) {
+        if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
             self.regs[rn] = base_with_offset;
         }
     }
 
-    /// LDM/STM. (TODO: align)
+    /// LDM/STM. (TODO: sys and user mode should be same)
     #[rustfmt::skip]
     pub fn block_data_transfer<
         const P: bool,
@@ -589,7 +599,43 @@ impl Arm7TDMI {
         let user_bank = S && !reg_list.contains(&15);
 
         let mut address = self.regs[rn];
-        if !U { reg_list.reverse() }
+        // Force align address but not directly modify it -- writeback is not aligned.
+        let aligned_addr = |address: u32| {
+            if address % 4 != 0 {
+                address & !3
+            } else {
+                address
+            }
+        };
+
+        // Edge case: empty register list.
+        if reg_list.is_empty() {
+            address = match (U, P) {
+                (false, false) => self.regs[rn] - 0x3C,
+                (false, true) => self.regs[rn] - 0x40,
+                (true, true) => self.regs[rn] + 0x4,
+                (true, false) => self.regs[rn],
+            };
+
+            if L {
+                self.branch = true;
+                self.regs[15] = self.bus.read32(aligned_addr(address));
+            } else {
+                self.bus
+                    .write32(aligned_addr(address), (self.regs[15] + 12) & !3);
+            }
+
+            self.regs[rn] = if U {
+                self.regs[rn] + 0x40
+            } else {
+                self.regs[rn] - 0x40
+            };
+            return;
+        }
+
+        if !U {
+            reg_list.reverse()
+        }
 
         for r in &reg_list {
             if P {
@@ -604,22 +650,38 @@ impl Arm7TDMI {
                 }
 
                 match user_bank {
-                    false => self.regs[*r] = self.bus.read32(address),
+                    false => self.regs[*r] = self.bus.read32(aligned_addr(address)),
                     true => {
                         self.banked_regs
-                            .entry(Mode::User)
-                            .and_modify(|(_, regs)| regs[*r] = self.bus.read32(address));
+                            .entry(Mode::System)
+                            .and_modify(|(_, regs)| {
+                                regs[*r] = self.bus.read32(aligned_addr(address))
+                            });
                     }
                 }
             } else {
-                self.bus.write32(
-                    address,
-                    if !user_bank {
-                        self.regs[*r]
-                    } else {
-                        self.banked_regs[&Mode::User].1[*r]
-                    },
-                );
+                // Edge case: rb in reg list and not first.
+                if *r == rn
+                    && ((U && reg_list[0] != *r) || (!U && reg_list[reg_list.len() - 1] != *r))
+                {
+                    self.bus.write32(
+                        aligned_addr(address),
+                        if U {
+                            self.regs[rn] + (reg_list.len() as u32 * 4)
+                        } else {
+                            self.regs[rn] - (reg_list.len() as u32 * 4)
+                        },
+                    )
+                } else {
+                    self.bus.write32(
+                        aligned_addr(address),
+                        if !user_bank {
+                            self.regs[*r] + if *r == 15 { 12 } else { 0 }
+                        } else {
+                            self.banked_regs[&Mode::System].1[*r]
+                        },
+                    );
+                }
             }
 
             if !P {
@@ -629,15 +691,14 @@ impl Arm7TDMI {
         }
 
         self.branch = L && reg_list.contains(&15);
-
-        // Writeback if W or Post and if Load but rn not in list or if Store.
-        if (W || !P) && !(L && reg_list.contains(&rn)) {
+        // Writeback if W  and if Load but rn not in list or if Store and W.
+        if (W && (L && !reg_list.contains(&rn))) || (!L && W) {
             self.regs[rn] = address;
         }
     }
 
     /// Test for LUT.
-    pub fn dummy(&mut self, _opcode: u32) {
+    pub fn undefined(&mut self, _opcode: u32) {
         panic!("shouldn't be called!")
     }
 

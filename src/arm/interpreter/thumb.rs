@@ -111,7 +111,7 @@ impl Arm7TDMI {
                 res
             }
             0b0101 => fl!(self.regs[rd], self.regs[rs] + self.cpsr.c() as u32, +, self, cpsr),
-            0b0110 => fl!(self.regs[rd], self.regs[rs], (!self.cpsr.c() as u32).wrapping_neg(), -, self, cpsr),
+            0b0110 => fl!(self.regs[rd], self.regs[rs], !self.cpsr.c() as u32, -, self, cpsr),
             0b0111 => {
                 let (res, carry) = self.ror(self.regs[rd], self.regs[rs], true);
                 self.cpsr.set_c(carry);
@@ -171,15 +171,15 @@ impl Arm7TDMI {
             0b00 if dst == 15 => {
                 self.branch = true;
                 (self.regs[dst] + self.regs[src] + pc + 4) & !1
-            }, 
+            },
             0b00 if dst != 15 => self.regs[dst] + self.regs[src] + pc,
-            0b01 => { 
+            0b01 => {
                 let res = fl!(self.regs[dst], self.regs[src] + pc, -, self, cpsr);
 
                 self.cpsr.set_z(res == 0);
                 self.cpsr.set_n((res & (1 << 31)) != 0);
 
-                self.regs[dst] 
+                self.regs[dst]
             },
             0b10 if dst == 15 => {
                 self.branch = true;
@@ -248,9 +248,13 @@ impl Arm7TDMI {
 
         match (S, H) {
             (false, false) => self.bus.write16(aligned_addr, self.regs[rd] as u16),
-            (false, true) => self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror),
+            (false, true) => {
+                self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror)
+            }
             (true, false) => self.regs[rd] = self.bus.read8(address) as i8 as u32,
-            (true, true) if address % 2 != 0 => self.regs[rd] = self.bus.read8(address) as i8 as u32,
+            (true, true) if address % 2 != 0 => {
+                self.regs[rd] = self.bus.read8(address) as i8 as u32
+            }
             (true, true) => self.regs[rd] = self.bus.read16(address) as i16 as u32,
         };
     }
@@ -470,5 +474,5 @@ impl Arm7TDMI {
     }
 
     /// Dummy for Thumb LUT.
-    pub fn t_dummy(&mut self, _opcode: u16) {}
+    pub fn t_undefined(&mut self, _opcode: u16) {}
 }
