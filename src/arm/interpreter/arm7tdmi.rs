@@ -171,8 +171,11 @@ impl Arm7TDMI {
                 if (int_f & (1 << i)) != 0 && (int_e & (1 << i)) != 0 {
                     self.regs[14] = self.regs[15] + 4;
 
+                    self.swap_regs(self.cpsr.mode().unwrap(), Mode::Irq);
                     self.spsr.set_cpsr(self.cpsr.cpsr());
+
                     self.cpsr.set_mode(Mode::Irq);
+                    self.cpsr.set_irq(false);
                     self.bus.iff.set_iff(int_f & !(1 << i));
 
                     self.regs[15] = 0x18;
