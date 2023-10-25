@@ -22,6 +22,20 @@ pub struct Ppu {
     pub bg2cnt: BGCONTROL,
     pub bg3cnt: BGCONTROL,
 
+    /// Specifies the coordinate of the upperleft first visible dot of
+    /// BG0 background layer, ie. used to scroll the BG0 area.
+    pub bg0hofs: u16,
+    pub bg0vofs: u16,
+    /// Same as above BG0HOFS and BG0VOFS for BG1 respectively.
+    pub bg1hofs: u16,
+    pub bg1vofs: u16,
+    /// Same as above BG0HOFS and BG0VOFS for BG2 respectively.
+    pub bg2hofs: u16,
+    pub bg2vofs: u16,
+    /// Same as above BG0HOFS and BG0VOFS for BG3 respectively.
+    pub bg3hofs: u16,
+    pub bg3vofs: u16,
+
     #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
 
@@ -97,6 +111,28 @@ impl Ppu {
     /// Render one scanline fully.
     fn scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
+            0 => {
+                for (bg, enabled) in [
+                    self.dispcnt.bg0(),
+                    self.dispcnt.bg1(),
+                    self.dispcnt.bg2(),
+                    self.dispcnt.bg3(),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    if *enabled {
+                        let bg_cnt = BGCONTROL(self.read16(0x08 + (bg as u32 * 2)));
+                        let bg_hofs = self.read16(0x10 + (bg as u32 * 4));
+                        let bg_vofs = self.read16(0x12 + (bg as u32 * 4));
+
+                        let map_data = 0x0600_0000 + (bg_cnt.screen_base_block() as u32 * 0x800);
+                        let tile_data = 0x0600_0000 + (bg_cnt.char_base_block() as u32 * 0x4000);
+
+                        // todo...
+                    }
+                }
+            }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
                 let line = &vram[start..(start + 480)];
@@ -124,6 +160,7 @@ impl Ppu {
 
 // TODO: u16 r/w for IO
 impl Mcu for Ppu {
+    #[rustfmt::skip]
     fn read8(&mut self, address: u32) -> u8 {
         match address {
             0x0000 => self.dispcnt.dispcnt() as u8,
@@ -143,44 +180,37 @@ impl Mcu for Ppu {
         }
     }
 
+    #[rustfmt::skip]
     fn write8(&mut self, address: u32, value: u8) {
         match address {
-            0x0000 => self
-                .dispcnt
-                .set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
-            0x0001 => self
-                .dispcnt
-                .set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
-            0x0004 => self
-                .dispstat
-                .set_dispstat((self.dispstat.0 & 0xFF00) | value as u16),
-            0x0005 => self
-                .dispstat
-                .set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
-            0x0008 => self
-                .bg0cnt
-                .set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
-            0x0009 => self
-                .bg0cnt
-                .set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),
-            0x000A => self
-                .bg1cnt
-                .set_bg_control((self.bg1cnt.0 & 0xFF00) | value as u16),
-            0x000B => self
-                .bg1cnt
-                .set_bg_control((value as u16) << 8 | (self.bg1cnt.0 & 0xFF)),
-            0x000C => self
-                .bg2cnt
-                .set_bg_control((self.bg2cnt.0 & 0xFF00) | value as u16),
-            0x000D => self
-                .bg2cnt
-                .set_bg_control((value as u16) << 8 | (self.bg2cnt.0 & 0xFF)),
-            0x000E => self
-                .bg3cnt
-                .set_bg_control((self.bg3cnt.0 & 0xFF00) | value as u16),
-            0x000F => self
-                .bg3cnt
-                .set_bg_control((value as u16) << 8 | (self.bg3cnt.0 & 0xFF)),
+            0x0000 => self.dispcnt.set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
+            0x0001 => self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
+            0x0004 => self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | value as u16),
+            0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
+            0x0008 => self.bg0cnt.set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
+            0x0009 => self.bg0cnt.set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),
+            0x000A => self.bg1cnt.set_bg_control((self.bg1cnt.0 & 0xFF00) | value as u16),
+            0x000B => self.bg1cnt.set_bg_control((value as u16) << 8 | (self.bg1cnt.0 & 0xFF)),
+            0x000C => self.bg2cnt.set_bg_control((self.bg2cnt.0 & 0xFF00) | value as u16),
+            0x000D => self.bg2cnt.set_bg_control((value as u16) << 8 | (self.bg2cnt.0 & 0xFF)),
+            0x000E => self.bg3cnt.set_bg_control((self.bg3cnt.0 & 0xFF00) | value as u16),
+            0x000F => self.bg3cnt.set_bg_control((value as u16) << 8 | (self.bg3cnt.0 & 0xFF)),
+            0x0010 => self.bg0hofs = (self.bg0hofs & 0xFF00) | value as u16,
+            0x0011 => self.bg0hofs = (self.bg0hofs & 0xFF) | ((value as u16) << 8),
+            0x0012 => self.bg0vofs = (self.bg0vofs & 0xFF00) | value as u16,
+            0x0013 => self.bg0vofs = (self.bg0vofs & 0xFF) | ((value as u16) << 8),
+            0x0014 => self.bg1hofs = (self.bg1hofs & 0xFF00) | value as u16,
+            0x0015 => self.bg1hofs = (self.bg1hofs & 0xFF) | ((value as u16) << 8),
+            0x0016 => self.bg1vofs = (self.bg1vofs & 0xFF00) | value as u16,
+            0x0017 => self.bg1vofs = (self.bg1vofs & 0xFF) | ((value as u16) << 8),
+            0x0018 => self.bg2hofs = (self.bg2hofs & 0xFF00) | value as u16,
+            0x0019 => self.bg2hofs = (self.bg2hofs & 0xFF) | ((value as u16) << 8),
+            0x001A => self.bg2vofs = (self.bg2vofs & 0xFF00) | value as u16,
+            0x001B => self.bg2vofs = (self.bg2vofs & 0xFF) | ((value as u16) << 8),
+            0x001C => self.bg3hofs = (self.bg3hofs & 0xFF00) | value as u16,
+            0x001D => self.bg3hofs = (self.bg3hofs & 0xFF) | ((value as u16) << 8),
+            0x001E => self.bg3vofs = (self.bg3vofs & 0xFF00) | value as u16,
+            0x001F => self.bg3vofs = (self.bg3vofs & 0xFF) | ((value as u16) << 8),
             _ => {}
         }
     }
