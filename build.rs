@@ -1,13 +1,20 @@
-use std::path::Path;
+#![allow(clippy::useless_format)]
+use std::{error::Error, path::Path};
 
-fn main() {
+/// This build script generates two look up tables at build time,
+/// which are then included in the actual code.
+/// 
+/// These function pointer LUTs can then be indexed with certain bits
+/// of the opcode encoding. This code generation ensures less manual work.
+fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = std::env::var_os("OUT_DIR").unwrap();
 
-    let arm_dest_path = Path::new(&out_dir).join("arm_instructions.rs");
-    let thumb_dest_path = Path::new(&out_dir).join("thumb_instructions.rs");
+    // Define the output files and const array signatures of the function pointer LUTs.
+    let arm_path = Path::new(&out_dir).join("arm_instructions.rs");
+    let thumb_path = Path::new(&out_dir).join("thumb_instructions.rs");
 
-    let arm_prelude = "pub const ARM_INSTRUCTIONS: [fn(&mut Arm7TDMI, u32); 4096] = [\n";
-    let thumb_prelude = "pub const THUMB_INSTRUCTIONS: [fn(&mut Arm7TDMI, u16); 256] = [\n";
+    let arm_pre = "pub const ARM_INSTRUCTIONS: [fn(&mut Arm7TDMI, u32); 4096] = [\n";
+    let thumb_pre = "pub const THUMB_INSTRUCTIONS: [fn(&mut Arm7TDMI, u16); 256] = [\n";
 
     let mut arm_instrs = String::new();
     let mut thumb_instrs = String::new();
@@ -22,20 +29,14 @@ fn main() {
         thumb_instrs += &format!("{},\n", decode_thumb(i));
     }
 
-    std::fs::write(
-        arm_dest_path,
-        arm_prelude.to_string() + &arm_instrs + "\n];",
-    )
-    .unwrap();
-    std::fs::write(
-        thumb_dest_path,
-        thumb_prelude.to_string() + &thumb_instrs + "\n];",
-    )
-    .unwrap();
-
+    std::fs::write(arm_path, arm_pre.to_string() + &arm_instrs + "\n];")?;
+    std::fs::write(thumb_path, thumb_pre.to_string() + &thumb_instrs + "\n];")?;
     println!("cargo:rerun-if-changed=build.rs");
+
+    Ok(())
 }
 
+/// Decode an ARMv4 opcode based on 12 bits (20-27 and 4-7) with bitmasks.
 fn decode_arm(index: u16) -> String {
     if index & 0b1111_1100_1111 == 0b0000_0000_1001 {
         let s_bit = index & (1 << 4) != 0;
@@ -112,6 +113,7 @@ fn decode_arm(index: u16) -> String {
     }
 }
 
+/// Decode a THUMB opcode based on 8 bits (8-15) with bitmasks.
 fn decode_thumb(index: u8) -> String {
     if index & 0b1111_1000 == 0b0001_1000 {
         let imm = index & (1 << 2) != 0;
