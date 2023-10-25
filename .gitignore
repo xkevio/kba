@@ -1,4 +1,5 @@
 /target
+/roms
 *.dll
 *.bin
 *.gba
