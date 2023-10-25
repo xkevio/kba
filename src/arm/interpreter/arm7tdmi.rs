@@ -161,7 +161,28 @@ impl Arm7TDMI {
         self.branch = false;
     }
 
-    // ARM INSTRUCTIONS IMPLEMENTATION & SHIFTER.
+    /// Check for interrupts between instructions and jump to corresponding vector.
+    pub fn dispatch_irq(&mut self) {
+        if self.bus.ime.enabled() && self.cpsr.irq() {
+            let int_e = self.bus.ie.ie();
+            let int_f = self.bus.iff.iff();
+
+            for i in 0..=13 {
+                if (int_f & (1 << i)) != 0 && (int_e & (1 << i)) != 0 {
+                    self.regs[14] = self.regs[15] + 4;
+
+                    self.spsr.set_cpsr(self.cpsr.cpsr());
+                    self.cpsr.set_mode(Mode::Irq);
+                    self.bus.iff.set_iff(int_f & !(1 << i));
+
+                    self.regs[15] = 0x18;
+                    return;
+                }
+            }
+        }
+    }
+
+    // ------------ ARM INSTRUCTIONS IMPLEMENTATION & SHIFTER. ------------
 
     /// If `I` is false, operand 2 is a register and gets shifted.
     /// Otherwise, it is an unsigned 8 bit immediate value.

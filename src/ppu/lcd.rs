@@ -3,7 +3,7 @@ use proc_bitfield::bitfield;
 
 use crate::{
     gba::{LCD_HEIGHT, LCD_WIDTH},
-    mmu::Mcu,
+    mmu::{Mcu, irq::IF},
 };
 
 const HDRAW_LEN: u16 = 1006;
@@ -34,23 +34,28 @@ enum Mode {
 
 impl Ppu {
     /// State machine that cycles through the modes and sets the right flags.
-    pub fn cycle(&mut self, vram: &[u8], palette_ram: &[u8]) {
+    pub fn cycle(&mut self, vram: &[u8], palette_ram: &[u8], iff: &mut IF) {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
                     self.scanline(vram, palette_ram);
+
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
+
+                    iff.set_hblank(self.dispstat.hblank_irq());
                 }
             }
             Mode::HBlank => {
                 if self.cycle > TOTAL_LEN {
                     self.vcount.set_ly(self.vcount.ly() + 1);
-                    self.dispstat
-                        .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
+
                     self.dispstat.set_hblank(false);
+                    self.dispstat.set_v_counter(self.vcount.ly() == self.dispstat.lyc());
+                    iff.set_vcount(self.dispstat.v_counter() && self.dispstat.v_counter_irq());
 
                     if self.vcount.ly() >= 160 {
+                        iff.set_vblank(self.dispstat.vblank_irq());
                         self.dispstat.set_vblank(true);
                         self.current_mode = Mode::VBlank;
                     } else {
