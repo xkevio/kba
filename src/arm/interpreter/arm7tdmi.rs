@@ -440,7 +440,7 @@ impl Arm7TDMI {
                 }
                 // Set control bits.
                 if opcode & (1 << 16) != 0 {
-                    source_psr.set_cpsr((rm & 0x7F) | (source_psr.cpsr() & !0x7F));
+                    source_psr.set_cpsr((rm & 0xDF) | (source_psr.cpsr() & !0xDF));
                 }
             }
 
