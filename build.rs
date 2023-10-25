@@ -3,7 +3,7 @@ use std::{error::Error, path::Path};
 
 /// This build script generates two look up tables at build time,
 /// which are then included in the actual code.
-/// 
+///
 /// These function pointer LUTs can then be indexed with certain bits
 /// of the opcode encoding. This code generation ensures less manual work.
 fn main() -> Result<(), Box<dyn Error>> {

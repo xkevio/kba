@@ -3,7 +3,7 @@ use proc_bitfield::bitfield;
 
 use crate::{
     gba::{LCD_HEIGHT, LCD_WIDTH},
-    mmu::{Mcu, irq::IF},
+    mmu::{irq::IF, Mcu},
 };
 
 const HDRAW_LEN: u16 = 1006;
@@ -16,6 +16,11 @@ pub struct Ppu {
     pub dispcnt: DISPCNT,
     pub dispstat: DISPSTAT,
     pub vcount: VCOUNT,
+
+    pub bg0cnt: BGCONTROL,
+    pub bg1cnt: BGCONTROL,
+    pub bg2cnt: BGCONTROL,
+    pub bg3cnt: BGCONTROL,
 
     #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
@@ -51,7 +56,8 @@ impl Ppu {
                     self.vcount.set_ly(self.vcount.ly() + 1);
 
                     self.dispstat.set_hblank(false);
-                    self.dispstat.set_v_counter(self.vcount.ly() == self.dispstat.lyc());
+                    self.dispstat
+                        .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
                     iff.set_vcount(self.dispstat.v_counter() && self.dispstat.v_counter_irq());
 
                     if self.vcount.ly() >= 160 {
@@ -116,14 +122,23 @@ impl Ppu {
     }
 }
 
+// TODO: u16 r/w for IO
 impl Mcu for Ppu {
     fn read8(&mut self, address: u32) -> u8 {
         match address {
             0x0000 => self.dispcnt.dispcnt() as u8,
-            0x0001 => ((self.dispcnt.dispcnt() & 0xFF00) >> 8) as u8,
+            0x0001 => (self.dispcnt.dispcnt() >> 8) as u8,
             0x0004 => self.dispstat.dispstat() as u8,
-            0x0005 => ((self.dispstat.dispstat() & 0xFF00) >> 8) as u8,
+            0x0005 => (self.dispstat.dispstat() >> 8) as u8,
             0x0006 => self.vcount.ly(),
+            0x0008 => self.bg0cnt.bg_control() as u8,
+            0x0009 => (self.bg0cnt.bg_control() >> 8) as u8,
+            0x000A => self.bg1cnt.bg_control() as u8,
+            0x000B => (self.bg1cnt.bg_control() >> 8) as u8,
+            0x000C => self.bg2cnt.bg_control() as u8,
+            0x000D => (self.bg2cnt.bg_control() >> 8) as u8,
+            0x000E => self.bg3cnt.bg_control() as u8,
+            0x000F => (self.bg3cnt.bg_control() >> 8) as u8,
             _ => 0,
         }
     }
@@ -142,6 +157,30 @@ impl Mcu for Ppu {
             0x0005 => self
                 .dispstat
                 .set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
+            0x0008 => self
+                .bg0cnt
+                .set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
+            0x0009 => self
+                .bg0cnt
+                .set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),
+            0x000A => self
+                .bg1cnt
+                .set_bg_control((self.bg1cnt.0 & 0xFF00) | value as u16),
+            0x000B => self
+                .bg1cnt
+                .set_bg_control((value as u16) << 8 | (self.bg1cnt.0 & 0xFF)),
+            0x000C => self
+                .bg2cnt
+                .set_bg_control((self.bg2cnt.0 & 0xFF00) | value as u16),
+            0x000D => self
+                .bg2cnt
+                .set_bg_control((value as u16) << 8 | (self.bg2cnt.0 & 0xFF)),
+            0x000E => self
+                .bg3cnt
+                .set_bg_control((self.bg3cnt.0 & 0xFF00) | value as u16),
+            0x000F => self
+                .bg3cnt
+                .set_bg_control((value as u16) << 8 | (self.bg3cnt.0 & 0xFF)),
             _ => {}
         }
     }
@@ -189,5 +228,20 @@ bitfield! {
     pub struct VCOUNT(pub u16) {
         pub vcount: u16 @ ..,
         pub ly: u8 @ 0..=7,
+    }
+}
+
+bitfield! {
+    /// **BGxCNT - BG Control** (r/w).
+    #[derive(Clone, Copy, Default)]
+    pub struct BGCONTROL(pub u16) {
+        pub bg_control: u16 @ ..,
+        pub prio: u8 @ 0..=1,
+        pub char_base_block: u8 @ 2..=3,
+        pub mosaic: bool @ 6,
+        pub palettes: bool @ 7,
+        pub screen_base_block: u8 @ 8..=12,
+        pub disp_area_overflow: bool @ 13,
+        pub screen_size: u8 @ 14..=15,
     }
 }

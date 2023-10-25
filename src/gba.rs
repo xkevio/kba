@@ -23,10 +23,11 @@ impl Gba {
         self.cpu.dispatch_irq();
 
         self.cpu.cycle();
-        self.cpu
-            .bus
-            .ppu
-            .cycle(&*self.cpu.bus.vram, &self.cpu.bus.palette_ram, &mut self.cpu.bus.iff);
+        self.cpu.bus.ppu.cycle(
+            &*self.cpu.bus.vram,
+            &self.cpu.bus.palette_ram,
+            &mut self.cpu.bus.iff,
+        );
 
         self.cycles += 1;
     }
