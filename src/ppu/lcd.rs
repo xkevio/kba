@@ -126,19 +126,37 @@ impl Ppu {
                         let bg_hofs = self.read16(0x10 + (bg as u32 * 4));
                         let bg_vofs = self.read16(0x12 + (bg as u32 * 4));
 
-                        let map_data = 0x0600_0000 + (bg_cnt.screen_base_block() as u32 * 0x800);
-                        let tile_data = 0x0600_0000 + (bg_cnt.char_base_block() as u32 * 0x4000);
-                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 }; 
+                        let y = self.vcount.ly();
 
-                        for tile_entry in (map_data..(map_data + tiles_per_line * 2)).step_by(2) {
-                            let tile_id = ((vram[tile_entry as usize - 0x0600_0000] as u16) << 8) | (vram[tile_entry as usize + 1]) as u16;
-                            let tile_start_addr = tile_data as usize - 0x0600_0000 + (tile_id as usize & 0x3FF) * ((bg_cnt.palettes() as usize + 1) * 32);
+                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 }; 
+                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + (y as u32 / 8 * tiles_per_line);
+                        let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+
+                        for (x, tile_entry) in (map_data..(map_data + tiles_per_line * 2)).step_by(2).enumerate() {
+                            let tile_id = ((vram[tile_entry as usize] as u16) << 8) | (vram[tile_entry as usize + 1]) as u16;
+                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * ((bg_cnt.palettes() as usize + 1) * 32);
                             let palette = (tile_id >> 12) & 0xF;
 
                             if !bg_cnt.palettes() {
                                 // 16/16, use palette num
+                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8);
+                                for px in tile_start_addr_ly..(tile_start_addr_ly + 8) {
+                                    let c0 = palette_ram[palette as usize * 0x20 + (vram[px] as usize * 2)];
+                                    let c1 = palette_ram[palette as usize * 0x20 + (vram[px] as usize * 2 + 1)];
+
+                                    if vram[px] == 0 { continue; }
+                                    self.buffer[y as usize * LCD_WIDTH + x + px] = u16::from_be_bytes([c1, c0]);
+                                }
                             } else {
                                 // 256/1
+                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8);
+                                for px in tile_start_addr_ly..(tile_start_addr_ly + 8) {
+                                    let palette_index = vram[px];
+                                    let c0 = palette_ram[palette_index as usize * 2];
+                                    let c1 = palette_ram[palette_index as usize * 2 + 1];
+
+                                    self.buffer[y as usize * LCD_WIDTH + x + px] = u16::from_be_bytes([c1, c0]);
+                                }
                             }
                         }
                     }
