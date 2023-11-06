@@ -122,6 +122,8 @@ impl Ppu {
                 .enumerate()
                 {
                     if *enabled {
+                        dbg!(bg);
+
                         let bg_cnt = BGCONTROL(self.read16(0x08 + (bg as u32 * 2)));
                         let bg_hofs = self.read16(0x10 + (bg as u32 * 4));
                         let bg_vofs = self.read16(0x12 + (bg as u32 * 4));
@@ -213,7 +215,10 @@ impl Mcu for Ppu {
     fn write8(&mut self, address: u32, value: u8) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
-            0x0001 => self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
+            0x0001 => {
+                println!("write to upper byte of DISPCNT");
+                self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF))
+            },
             0x0004 => self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | value as u16),
             0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
             0x0008 => self.bg0cnt.set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),

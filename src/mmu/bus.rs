@@ -64,7 +64,7 @@ impl Mcu for Bus {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000],
             0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x0000_8000) + 0x3_FFFF],
             0x0400_0000..=0x0400_03FE => match address - 0x0400_0000 {
-                addr @ 0x0000..=0x0006 => self.ppu.read8(addr),
+                addr @ 0x0000..=0x001F => self.ppu.read8(addr),
                 0x0130 => self.key_input.keyinput() as u8,
                 0x0131 => (self.key_input.keyinput() >> 8) as u8,
                 0x0200 => self.ie.ie() as u8,
@@ -92,7 +92,7 @@ impl Mcu for Bus {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000] = value,
             0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x8000) + 0x3_FFFF] = value,
             0x0400_0000..=0x0400_03FE => match address - 0x0400_0000 {
-                addr @ 0x0000..=0x0006 => self.ppu.write8(addr, value),
+                addr @ 0x0000..=0x001F => self.ppu.write8(addr, value),
                 0x0200 => self.ie.set_ie((self.ie.ie() & 0xFF00) | (value as u16)),
                 0x0201 => self.ie.set_ie(((value as u16) << 8) | (self.ie.ie() & 0xFF)),
                 0x0202 => self.iff.set_iff((self.iff.iff() & 0xFF00) | (value as u16)),

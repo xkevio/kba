@@ -150,13 +150,14 @@ impl Arm7TDMI {
         // Branch exchange.
         if op == 0b11 {
             let addr = if !h2 { self.regs[rs] } else { self.regs[rs + 8] };
-            self.regs[15] = addr & !1;
 
             // Bit 0 of Rn decides decoding of subsequent instructions.
             if addr & 1 == 0 {
                 self.cpsr.set_state(State::Arm);
+                self.regs[15] = addr & !3;
             } else {
                 self.cpsr.set_state(State::Thumb);
+                self.regs[15] = addr & !1;
             }
 
             self.branch = true;
@@ -355,7 +356,7 @@ impl Arm7TDMI {
             .filter(|i| (opcode & (1 << i)) != 0)
             .collect::<Vec<_>>();
 
-        let mut address = self.regs[13];
+        let mut address = self.regs[13] & !3;
         if !L {
             reg_list.reverse()
         }
@@ -403,7 +404,7 @@ impl Arm7TDMI {
         // Edge case: empty register list.
         if reg_list.is_empty() {
             if L {
-                self.regs[15] = self.bus.read32(aligned_addr(address));
+                self.regs[15] = self.bus.read32(aligned_addr(address)) & !1;
                 self.branch = true;
             } else {
                 self.bus.write32(aligned_addr(address), (self.regs[15] + 6) & !1);
@@ -436,22 +437,23 @@ impl Arm7TDMI {
 
     /// Format 16: conditional branch.
     pub fn cond_branch(&mut self, opcode: u16) {
-        let signed_offset = ((opcode & 0xFF) << 1) as i8 as i32;
+        let signed_offset = (opcode as i8 as i32) << 1;
 
         if self.cond((opcode >> 8) as u8 & 0xF) {
             self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4 - 2);
+            self.regs[15] &= !1;
         }
     }
 
     /// Format 17: swi (same as ARM)
     pub fn t_swi(&mut self, _opcode: u16) {
-        self.swi(0);
+        self.swi::<true>(_opcode as u32);
     }
 
     /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
-        let signed_offset = (((opcode as u32 & 0x7FF) << 1) << 22) as i32 >> 22;
-        self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4 - 2);
+        let signed_offset = ((opcode as i16 & 0x7FF) << 5) as i32 >> 5;
+        self.regs[15] = self.regs[15].wrapping_add_signed((signed_offset << 1) + 4 - 2);
         self.regs[15] &= !1;
     }
 
@@ -467,7 +469,7 @@ impl Arm7TDMI {
             let addr = self.regs[14] + ((offset << 1) as u32);
 
             self.regs[14] = (self.regs[15] + 2) | 1;
-            self.regs[15] = addr;
+            self.regs[15] = addr & !1;
 
             self.branch = true;
         }

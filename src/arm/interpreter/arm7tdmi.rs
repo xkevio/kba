@@ -135,6 +135,7 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
+        println!("{:X?}", self.regs);
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -148,6 +149,8 @@ impl Arm7TDMI {
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
+                // println!("{:X}", opcode);
+
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
@@ -244,7 +247,7 @@ impl Arm7TDMI {
             0b1011 => self.cpsr.n() != self.cpsr.v(),
             0b1100 => !self.cpsr.z() && (self.cpsr.n() == self.cpsr.v()),
             0b1101 => self.cpsr.z() || (self.cpsr.n() != self.cpsr.v()),
-            0b1110 => true,
+            0b1110 | 0b1111 => true,
             _ => unreachable!(),
         }
     }
@@ -292,15 +295,13 @@ impl Arm7TDMI {
 
         if S {
             if rd == 15 {
-                if !self
+                if self
                     .cpsr
                     .mode()
-                    .is_ok_and(|m| m == Mode::User || m == Mode::System)
+                    .is_ok_and(|m| m != Mode::User || m != Mode::System)
                 {
                     let spsr = self.spsr;
-                    if self.cpsr.mode() != self.spsr.mode() {
-                        self.swap_regs(self.cpsr.mode().unwrap(), self.spsr.mode().unwrap());
-                    }
+                    self.swap_regs(self.cpsr.mode().unwrap(), self.spsr.mode().unwrap());
                     self.cpsr.set_cpsr(spsr.cpsr());
                 }
             } else {
@@ -399,12 +400,14 @@ impl Arm7TDMI {
     /// Branch and Exchange.
     pub fn bx(&mut self, opcode: u32) {
         let rn = self.regs[opcode as usize & 0xF];
-        self.regs[15] = rn & !1;
 
         // Bit 0 of Rn decides decoding of subsequent instructions.
-        match rn & 1 == 0 {
-            true => self.cpsr.set_state(State::Arm),
-            false => self.cpsr.set_state(State::Thumb),
+        if rn & 1 == 0 {
+            self.cpsr.set_state(State::Arm);
+            self.regs[15] = rn & !3;
+        } else {
+            self.cpsr.set_state(State::Thumb);
+            self.regs[15] = rn & !1;
         };
 
         self.branch = true;
@@ -484,15 +487,24 @@ impl Arm7TDMI {
         }
     }
 
-    /// Software Interrupt.
-    pub fn swi(&mut self, _opcode: u32) {
+    /// Software Interrupt (T for Thumb).
+    pub fn swi<const T: bool>(&mut self, _opcode: u32) {
+        let cpsr = self.cpsr;
+        if T { println!("SWI {:X}", _opcode as u8) };
+
+        // Switch to ARM state.
+        self.cpsr.set_state(State::Arm);
+        
+        // Switch to SVC mode.
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
         self.cpsr.set_mode(Mode::Supervisor);
 
-        self.spsr = self.cpsr;
-        self.branch = true;
+        // Save address of next instruction in r14_svc.
+        self.regs[14] = self.regs[15] + if T { 2 } else { 4 };
+        // Save CPSR in SPSR_svc.
+        self.spsr = cpsr;
 
-        self.regs[14] = self.regs[15] + 4;
+        self.branch = true;
         self.regs[15] = 0x08;
     }
 

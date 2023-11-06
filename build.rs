@@ -107,7 +107,7 @@ fn decode_arm(index: u16) -> String {
             i_bit, p_bit, u_bit, b_bit, w_bit, l_bit
         )
     } else if index & 0b1111_0000_0000 == 0b1111_0000_0000 {
-        format!("Arm7TDMI::swi")
+        format!("Arm7TDMI::swi::<false>")
     } else {
         format!("Arm7TDMI::undefined")
     }
