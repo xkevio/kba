@@ -135,7 +135,7 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        println!("{:X?}", self.regs);
+        // println!("{:X?}", self.regs);
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
