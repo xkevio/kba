@@ -67,9 +67,10 @@ impl Ppu {
             }
             Mode::HBlank => {
                 if self.cycle > TOTAL_LEN {
-                    self.vcount.set_ly(self.vcount.ly() + 1);
-
+                    self.cycle = 0;
                     self.dispstat.set_hblank(false);
+
+                    self.vcount.set_ly(self.vcount.ly() + 1);
                     self.dispstat
                         .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
 
@@ -78,30 +79,36 @@ impl Ppu {
                     }
 
                     if self.vcount.ly() >= 160 {
-                        println!("vblank time {}", self.dispstat.vblank_irq());
-                        if self.dispstat.vblank_irq() { println!("rq vblank irq");iff.set_vblank(true); }
+                        if self.dispstat.vblank_irq() { iff.set_vblank(true); }
                         self.dispstat.set_vblank(true);
                         self.current_mode = Mode::VBlank;
                     } else {
                         self.current_mode = Mode::HDraw;
                     }
 
-                    self.cycle = 0;
                 }
             }
             Mode::VBlank => {
                 // HBlank in DIPSTAT still gets set during VBlank.
                 if self.cycle > HDRAW_LEN {
+                    if self.dispstat.hblank_irq() { iff.set_hblank(true); }
                     self.dispstat.set_hblank(true);
                 }
 
                 if self.cycle > TOTAL_LEN {
                     self.cycle = 0;
-                    self.vcount.set_ly(self.vcount.ly() + 1);
                     self.dispstat.set_hblank(false);
 
+                    self.vcount.set_ly(self.vcount.ly() + 1);
+                    self.dispstat
+                        .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
+
+                    if self.dispstat.v_counter() && self.dispstat.v_counter_irq() {
+                        iff.set_vcount(true);
+                    }
+
                     if self.vcount.ly() == TOTAL_LINES {
-                        self.vcount.set_ly(0);
+                        self.vcount.set_ly(0); // todo: vcount irq for ly = 0
                         self.dispstat.set_vblank(false);
                         self.current_mode = Mode::HDraw;
                     }
@@ -218,8 +225,8 @@ impl Mcu for Ppu {
     fn write8(&mut self, address: u32, value: u8) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
-            0x0001 => {println!("write to dispcnt upper {value:X}"); self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF))},
-            0x0004 => {println!("write to dispstat lower {value:X}");self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16)},
+            0x0001 => {/*println!("write to dispcnt upper {value:X}");*/ self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF))},
+            0x0004 => {/*println!("write to dispstat lower {value:X}");*/self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16)},
             0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
             0x0008 => self.bg0cnt.set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
             0x0009 => self.bg0cnt.set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),

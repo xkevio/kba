@@ -33,6 +33,8 @@ pub struct Bus {
     pub oam: [u8; 0x400],
     /// External Memory (Cartridge).
     pub game_pak: GamePak,
+
+    pub halt: bool,
 }
 
 impl Default for Bus {
@@ -51,6 +53,8 @@ impl Default for Bus {
             vram: box_arr![0x00; 0x18000],
             oam: [0x00; 0x400],
             game_pak: GamePak::default(),
+
+            halt: false,
         }
     }
 }
@@ -94,12 +98,13 @@ impl Mcu for Bus {
                 addr @ 0x0000..=0x001F => self.ppu.write8(addr, value),
                 0x0200 => self.ie.set_ie((self.ie.ie() & 0x3F00) | (value as u16)),
                 0x0201 => self.ie.set_ie(((value as u16 & 0x3F) << 8) | (self.ie.ie() & 0xFF)),
-                0x0202 => {println!("ack irq: {value:b}"); self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF); println!("{:b}", self.iff.0)},
+                0x0202 => self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF),
                 0x0203 => self.iff.set_iff((self.iff.iff() & !((value as u16) << 8)) & 0x3FFF),
                 0x0208 => self.ime.set_enabled(value & 1 != 0),
                 0x0209 => self.ime.set_ime(((value as u32) << 8) | (self.ime.ime() & 0xFF)),
                 0x020A => self.ime.set_ime(((value as u32) << 16) | (self.ime.ime() & 0xFFFF)),
                 0x020B => self.ime.set_ime(((value as u32) << 24) | (self.ime.ime() & 0xFFFFFF)),
+                0x0301 => self.halt = (value >> 7) == 0,
                 _ => {}
             },
             0x0500_0000..=0x05FF_FFFF => self.palette_ram[address as usize % 0x400] = value,

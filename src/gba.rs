@@ -20,14 +20,21 @@ impl Gba {
     }
 
     pub fn run(&mut self) {
-        self.cpu.dispatch_irq();
-        self.cpu.cycle();
+        if self.cpu.bus.halt && (self.cpu.bus.ie.0 & self.cpu.bus.iff.0) != 0 {
+            self.cpu.bus.halt = false;
+        }
+
+        if !self.cpu.bus.halt {
+            self.cpu.dispatch_irq();
+            self.cpu.cycle();
+        }
+
+        // Later refactor into bus cycle() method.
         self.cpu.bus.ppu.cycle(
             &*self.cpu.bus.vram,
             &self.cpu.bus.palette_ram,
             &mut self.cpu.bus.iff,
         );
-        
         self.cycles += 1;
     }
 }

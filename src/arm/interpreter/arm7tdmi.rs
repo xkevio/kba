@@ -135,7 +135,7 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        println!("{:X?}", self.regs);
+        // if self.regs[15] >= 0x0300_0000 { println!("{:08X}", self.regs[15]) };
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -171,7 +171,6 @@ impl Arm7TDMI {
 
             if (int_f & int_e) != 0 {
                 let cpsr = self.cpsr;
-                println!("dispatching irq, {int_e:b} & {int_f:b}");
 
                 // Switch to ARM state.
                 self.cpsr.set_state(State::Arm);
