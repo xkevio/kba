@@ -62,7 +62,7 @@ impl Mcu for Bus {
         match address {
             0x0000..=0x3FFF => self.bios[address as usize],
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000],
-            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x0000_8000) + 0x3_FFFF],
+            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
             0x0400_0000..=0x0400_03FE => match address - 0x0400_0000 {
                 addr @ 0x0000..=0x001F => self.ppu.read8(addr),
                 0x0130 => self.key_input.keyinput() as u8,
@@ -80,7 +80,8 @@ impl Mcu for Bus {
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000],
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000],
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000],
-            0x0800_0000..=0x0DFF_FFFF => self.game_pak.read8(address - 0x0800_0000),
+            0x0800_0000..=0x0DFF_FFFF => self.game_pak.rom[address as usize - 0x0800_0000],
+            0x0E00_0000..=0x0E00_FFFF => self.game_pak.sram[address as usize - 0x0E00_0000],
             _ => 0,
         }
     }
@@ -90,7 +91,7 @@ impl Mcu for Bus {
         // TODO: sram
         match address {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000] = value,
-            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x8000) + 0x3_FFFF] = value,
+            0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
             0x0400_0000..=0x0400_03FE => match address - 0x0400_0000 {
                 addr @ 0x0000..=0x001F => self.ppu.write8(addr, value),
                 0x0200 => self.ie.set_ie((self.ie.ie() & 0xFF00) | (value as u16)),
@@ -106,7 +107,8 @@ impl Mcu for Bus {
             0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
             0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
             0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
-            _ => eprintln!("Write to ROM: {address:X}"),
+            0x0E00_0000..=0x0E00_FFFF => self.game_pak.sram[address as usize - 0x0E00_0000] = value,
+            _ => {} //eprintln!("Write to ROM/unknown addr: {address:X}"),
         }
     }
 }

@@ -105,7 +105,7 @@ impl Arm7TDMI {
         let bus = Bus {
             game_pak: GamePak {
                 rom: rom.to_vec(),
-                ..Default::default()
+                sram: vec![0; 0x10000],
             },
             ..Default::default()
         };
@@ -139,6 +139,7 @@ impl Arm7TDMI {
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
+                // println!("{:X}", opcode);
 
                 let cond = (opcode >> 28) & 0xF;
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
@@ -149,8 +150,6 @@ impl Arm7TDMI {
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
-                // println!("{:X}", opcode);
-
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
@@ -166,21 +165,28 @@ impl Arm7TDMI {
 
     /// Check for interrupts between instructions and jump to corresponding vector.
     pub fn dispatch_irq(&mut self) {
-        if self.bus.ime.enabled() && self.cpsr.irq() {
+        if self.bus.ime.enabled() && !self.cpsr.irq() {
             let int_e = self.bus.ie.ie();
             let int_f = self.bus.iff.iff();
 
             for i in 0..=13 {
                 if (int_f & (1 << i)) != 0 && (int_e & (1 << i)) != 0 {
-                    self.regs[14] = self.regs[15] + 4;
-
+                    let cpsr = self.cpsr;
+            
+                    // Switch to ARM state.
+                    self.cpsr.set_state(State::Arm);
+                    self.cpsr.set_irq(true);
+                    
+                    // Switch to IRQ mode.
                     self.swap_regs(self.cpsr.mode().unwrap(), Mode::Irq);
-                    self.spsr.set_cpsr(self.cpsr.cpsr());
-
                     self.cpsr.set_mode(Mode::Irq);
-                    self.cpsr.set_irq(false);
+            
+                    // Save address of next instruction in r14_svc.
+                    self.regs[14] = self.regs[15] + 4;
+                    // Save CPSR in SPSR_svc.
+                    self.spsr = cpsr;
+            
                     self.bus.iff.set_iff(int_f & !(1 << i));
-
                     self.regs[15] = 0x18;
                     return;
                 }
@@ -490,10 +496,10 @@ impl Arm7TDMI {
     /// Software Interrupt (T for Thumb).
     pub fn swi<const T: bool>(&mut self, _opcode: u32) {
         let cpsr = self.cpsr;
-        if T { println!("SWI {:X}", _opcode as u8) };
 
         // Switch to ARM state.
         self.cpsr.set_state(State::Arm);
+        self.cpsr.set_irq(true);
         
         // Switch to SVC mode.
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
@@ -564,6 +570,9 @@ impl Arm7TDMI {
             if B {
                 self.bus.write8(address, data as u8);
             } else {
+                if address == 0x0300_0000 {
+                    println!("storing {data:X}");
+                }
                 self.bus.write32(aligned_addr, data);
             }
         }
@@ -758,7 +767,7 @@ impl Arm7TDMI {
     #[inline(always)]
     pub(super) fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         match reg {
-            false => (rm << amount, rm & (1 << (32 - amount)) != 0),
+            false => (rm << amount, if amount == 0 { self.cpsr.c() } else { rm & (1 << (32 - amount)) != 0 }),
             true => {
                 if amount == 0 {
                     (rm, self.cpsr.c())
