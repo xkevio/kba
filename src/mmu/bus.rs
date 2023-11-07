@@ -58,7 +58,6 @@ impl Default for Bus {
 impl Mcu for Bus {
     #[rustfmt::skip]
     fn read8(&mut self, address: u32) -> u8 {
-        // TODO: sram
         match address {
             0x0000..=0x3FFF => self.bios[address as usize],
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000],
@@ -77,37 +76,36 @@ impl Mcu for Bus {
                 0x020B => (self.ime.ime() >> 24) as u8,
                 _ => 0xFF,
             },
-            0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000],
-            0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000],
-            0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000],
+            0x0500_0000..=0x05FF_FFFF => self.palette_ram[address as usize % 0x400],
+            0x0600_0000..=0x06FF_FFFF => self.vram[address as usize % 0x0001_8000],
+            0x0700_0000..=0x07FF_FFFF => self.oam[address as usize % 0x400],
             0x0800_0000..=0x0DFF_FFFF => self.game_pak.rom[address as usize - 0x0800_0000],
-            0x0E00_0000..=0x0E00_FFFF => self.game_pak.sram[address as usize - 0x0E00_0000],
+            0x0E00_0000..=0x0FFF_FFFF => self.game_pak.sram[address as usize % 0x0001_0000],
             _ => 0,
         }
     }
 
     #[rustfmt::skip]
     fn write8(&mut self, address: u32, value: u8) {
-        // TODO: sram
         match address {
             0x0200_0000..=0x02FF_FFFF => self.wram[address as usize % 0x0004_0000] = value,
             0x0300_0000..=0x03FF_FFFF => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
             0x0400_0000..=0x0400_03FE => match address - 0x0400_0000 {
                 addr @ 0x0000..=0x001F => self.ppu.write8(addr, value),
-                0x0200 => self.ie.set_ie((self.ie.ie() & 0xFF00) | (value as u16)),
-                0x0201 => self.ie.set_ie(((value as u16) << 8) | (self.ie.ie() & 0xFF)),
-                0x0202 => self.iff.set_iff((self.iff.iff() & 0xFF00) | (value as u16)),
-                0x0203 => self.iff.set_iff(((value as u16) << 8) | (self.iff.iff() & 0xFF)),
+                0x0200 => self.ie.set_ie((self.ie.ie() & 0x3F00) | (value as u16)),
+                0x0201 => self.ie.set_ie(((value as u16 & 0x3F) << 8) | (self.ie.ie() & 0xFF)),
+                0x0202 => {println!("ack irq: {value:b}"); self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF); println!("{:b}", self.iff.0)},
+                0x0203 => self.iff.set_iff((self.iff.iff() & !((value as u16) << 8)) & 0x3FFF),
                 0x0208 => self.ime.set_enabled(value & 1 != 0),
                 0x0209 => self.ime.set_ime(((value as u32) << 8) | (self.ime.ime() & 0xFF)),
                 0x020A => self.ime.set_ime(((value as u32) << 16) | (self.ime.ime() & 0xFFFF)),
                 0x020B => self.ime.set_ime(((value as u32) << 24) | (self.ime.ime() & 0xFFFFFF)),
                 _ => {}
             },
-            0x0500_0000..=0x0500_03FF => self.palette_ram[address as usize - 0x0500_0000] = value,
-            0x0600_0000..=0x0601_7FFF => self.vram[address as usize - 0x0600_0000] = value,
-            0x0700_0000..=0x0700_03FF => self.oam[address as usize - 0x0700_0000] = value,
-            0x0E00_0000..=0x0E00_FFFF => self.game_pak.sram[address as usize - 0x0E00_0000] = value,
+            0x0500_0000..=0x05FF_FFFF => self.palette_ram[address as usize % 0x400] = value,
+            0x0600_0000..=0x06FF_FFFF => self.vram[address as usize % 0x0001_8000] = value,
+            0x0700_0000..=0x07FF_FFFF => self.oam[address as usize % 0x400] = value,
+            0x0E00_0000..=0x0FFF_FFFF => self.game_pak.sram[address as usize % 0x0001_0000] = value,
             _ => {} //eprintln!("Write to ROM/unknown addr: {address:X}"),
         }
     }

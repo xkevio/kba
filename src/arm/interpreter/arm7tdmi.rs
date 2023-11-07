@@ -135,7 +135,7 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        // println!("{:X?}", self.regs);
+        println!("{:X?}", self.regs);
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -169,27 +169,24 @@ impl Arm7TDMI {
             let int_e = self.bus.ie.ie();
             let int_f = self.bus.iff.iff();
 
-            for i in 0..=13 {
-                if (int_f & (1 << i)) != 0 && (int_e & (1 << i)) != 0 {
-                    let cpsr = self.cpsr;
-            
-                    // Switch to ARM state.
-                    self.cpsr.set_state(State::Arm);
-                    self.cpsr.set_irq(true);
-                    
-                    // Switch to IRQ mode.
-                    self.swap_regs(self.cpsr.mode().unwrap(), Mode::Irq);
-                    self.cpsr.set_mode(Mode::Irq);
-            
-                    // Save address of next instruction in r14_svc.
-                    self.regs[14] = self.regs[15] + 4;
-                    // Save CPSR in SPSR_svc.
-                    self.spsr = cpsr;
-            
-                    self.bus.iff.set_iff(int_f & !(1 << i));
-                    self.regs[15] = 0x18;
-                    return;
-                }
+            if (int_f & int_e) != 0 {
+                let cpsr = self.cpsr;
+                println!("dispatching irq, {int_e:b} & {int_f:b}");
+
+                // Switch to ARM state.
+                self.cpsr.set_state(State::Arm);
+                self.cpsr.set_irq(true);
+                
+                // Switch to IRQ mode.
+                self.swap_regs(self.cpsr.mode().unwrap(), Mode::Irq);
+                self.cpsr.set_mode(Mode::Irq);
+        
+                // Save address of next instruction in r14_svc.
+                self.regs[14] = self.regs[15] + 4;
+                // Save CPSR in SPSR_svc.
+                self.spsr = cpsr;
+        
+                self.regs[15] = 0x18;
             }
         }
     }
@@ -570,9 +567,6 @@ impl Arm7TDMI {
             if B {
                 self.bus.write8(address, data as u8);
             } else {
-                if address == 0x0300_0000 {
-                    println!("storing {data:X}");
-                }
                 self.bus.write32(aligned_addr, data);
             }
         }
