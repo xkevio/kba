@@ -91,7 +91,7 @@ impl Ppu {
             Mode::VBlank => {
                 // HBlank in DIPSTAT still gets set during VBlank.
                 if self.cycle > HDRAW_LEN {
-                    if self.dispstat.hblank_irq() { iff.set_hblank(true); }
+                    // if self.dispstat.hblank_irq() { iff.set_hblank(true); }
                     self.dispstat.set_hblank(true);
                 }
 
@@ -225,8 +225,8 @@ impl Mcu for Ppu {
     fn write8(&mut self, address: u32, value: u8) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
-            0x0001 => {/*println!("write to dispcnt upper {value:X}");*/ self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF))},
-            0x0004 => {/*println!("write to dispstat lower {value:X}");*/self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16)},
+            0x0001 => self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
+            0x0004 => self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16),
             0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
             0x0008 => self.bg0cnt.set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
             0x0009 => self.bg0cnt.set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),
