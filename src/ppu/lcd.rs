@@ -1,4 +1,5 @@
 use derivative::Derivative;
+use itertools::Itertools;
 use proc_bitfield::bitfield;
 
 use crate::{
@@ -17,27 +18,16 @@ pub struct Ppu {
     pub dispstat: DISPSTAT,
     pub vcount: VCOUNT,
 
-    pub bg0cnt: BGCONTROL,
-    pub bg1cnt: BGCONTROL,
-    pub bg2cnt: BGCONTROL,
-    pub bg3cnt: BGCONTROL,
+    /// Background Control for background 0 - 3.
+    pub bgxcnt: [BGCONTROL; 4],
 
     /// Specifies the coordinate of the upperleft first visible dot of
-    /// BG0 background layer, ie. used to scroll the BG0 area.
-    pub bg0hofs: u16,
-    pub bg0vofs: u16,
-    /// Same as above BG0HOFS and BG0VOFS for BG1 respectively.
-    pub bg1hofs: u16,
-    pub bg1vofs: u16,
-    /// Same as above BG0HOFS and BG0VOFS for BG2 respectively.
-    pub bg2hofs: u16,
-    pub bg2vofs: u16,
-    /// Same as above BG0HOFS and BG0VOFS for BG3 respectively.
-    pub bg3hofs: u16,
-    pub bg3vofs: u16,
+    /// BGx background layer, ie. used to scroll the BGx area.
+    pub bgxhofs: [u16; 4],
+    pub bgxvofs: [u16; 4],
 
-    #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
-    pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
+    #[derivative(Default(value = "[0; 256 * 256]"))]
+    pub buffer: [u16; 256 * 256],
 
     current_mode: Mode,
     cycle: u16,
@@ -62,7 +52,9 @@ impl Ppu {
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
 
-                    if self.dispstat.hblank_irq() { iff.set_hblank(true); }
+                    if self.dispstat.hblank_irq() {
+                        iff.set_hblank(true);
+                    }
                 }
             }
             Mode::HBlank => {
@@ -79,13 +71,14 @@ impl Ppu {
                     }
 
                     if self.vcount.ly() >= 160 {
-                        if self.dispstat.vblank_irq() { iff.set_vblank(true); }
+                        if self.dispstat.vblank_irq() {
+                            iff.set_vblank(true);
+                        }
                         self.dispstat.set_vblank(true);
                         self.current_mode = Mode::VBlank;
                     } else {
                         self.current_mode = Mode::HDraw;
                     }
-
                 }
             }
             Mode::VBlank => {
@@ -123,52 +116,70 @@ impl Ppu {
     fn scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
             0 => {
-                for (bg, enabled) in [
+                let sorted_bgs = [0, 1, 2, 3]
+                    .iter()
+                    .zip(self.bgxcnt.iter())
+                    .sorted_by_key(|(_, bg)| 3 - bg.prio())
+                    .collect_vec();
+
+                let bg_enable = [
                     self.dispcnt.bg0(),
                     self.dispcnt.bg1(),
                     self.dispcnt.bg2(),
                     self.dispcnt.bg3(),
-                ]
-                .iter()
-                .enumerate()
-                {
-                    if *enabled {
-                        // dbg!(bg);
-                        let bg_cnt = BGCONTROL(self.read16(0x08 + (bg as u32 * 2)));
-                        let _bg_hofs = self.read16(0x10 + (bg as u32 * 4));
-                        let _bg_vofs = self.read16(0x12 + (bg as u32 * 4));
+                ];
+
+                for (bg_i, bg_cnt) in sorted_bgs {
+                    if bg_enable[*bg_i] {
+                        // let _bg_hofs = self.bgxhofs[*bg_i];
+                        // let _bg_vofs = self.bgxvofs[*bg_i];
 
                         let y = self.vcount.ly();
 
-                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 }; 
-                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + (y as u32 / 8 * tiles_per_line);
+                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 };
+                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + ((y as u32 / 8) * tiles_per_line * 2);
                         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
 
-                        for (x, tile_entry) in (map_data..(map_data + tiles_per_line * 2)).step_by(2).enumerate() {
-                            let tile_id = ((vram[tile_entry as usize] as u16) << 8) | (vram[tile_entry as usize + 1]) as u16;
-                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * ((bg_cnt.palettes() as usize + 1) * 32);
-                            let palette = (tile_id >> 12) & 0xF;
+                        for (x, tile_entry) in (map_data..(map_data + tiles_per_line * 2))
+                            .step_by(2)
+                            .enumerate()
+                        {
+                            let tile_id = ((vram[tile_entry as usize + 1] as u16) << 8) | (vram[tile_entry as usize]) as u16;
+                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * 32 as usize /* * ((bg_cnt.palettes() as usize + 1) * 32)*/;
+                            
+                            let h_flip = tile_id & (1 << 10) != 0;
+                            let _v_flip = tile_id & (1 << 11) != 0;
+                            let pal_idx = tile_id >> 12;
 
-                            if !bg_cnt.palettes() {
-                                // 16/16, use palette num
-                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8);
-                                for px in tile_start_addr_ly..(tile_start_addr_ly + 8) {
-                                    let c0 = palette_ram[palette as usize * 0x20 + (vram[px] as usize * 2)];
-                                    let c1 = palette_ram[palette as usize * 0x20 + (vram[px] as usize * 2 + 1)];
+                            if !bg_cnt.bpp() {
+                                // 4 bits per pixel -> 16 palettes w/ 16 colors
+                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8) * 4;
+                                for (i, px) in
+                                    (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate()
+                                {
+                                    let c0 = palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize & 0xF) * 2];
+                                    let c1 = palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize & 0xF) * 2 + 1)];
 
-                                    if vram[px] == 0 { continue; }
-                                    self.buffer[y as usize * LCD_WIDTH + x + px] = u16::from_be_bytes([c1, c0]);
+                                    let c2 = palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize >> 4) * 2];
+                                    let c3 = palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize >> 4) * 2 + 1)];
+
+                                    let hori_x = if h_flip { 7 - i * 2 } else { i * 2 };
+
+                                    // TODO: combine these
+                                    let buf_idx = y as usize * 256 + (x * 8) + hori_x;
+                                    let buf_idx_0 = y as usize * 256 + (x * 8) + if h_flip { hori_x - 1 } else { hori_x + 1 };
+
+                                    if vram[px] & 0xF != 0 {
+                                        self.buffer[buf_idx] = u16::from_be_bytes([c1, c0]);
+                                    }
+
+                                    if vram[px] >> 4 != 0 {
+                                        self.buffer[buf_idx_0] = u16::from_be_bytes([c3, c2]);
+                                    }
                                 }
                             } else {
-                                // 256/1
-                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8);
-                                for (i, px) in (tile_start_addr_ly..(tile_start_addr_ly + 8)).enumerate() {
-                                    let palette_index = vram[px];
-                                    let c0 = palette_ram[palette_index as usize * 2];
-                                    let c1 = palette_ram[palette_index as usize * 2 + 1];
-
-                                    self.buffer[y as usize * LCD_WIDTH + x + i] = u16::from_be_bytes([c1, c0]);
-                                }
+                                // 8 bits per pixel -> 1 palette w/ 256 colors
+                                todo!()
                             }
                         }
                     }
@@ -209,14 +220,14 @@ impl Mcu for Ppu {
             0x0004 => self.dispstat.dispstat() as u8,
             0x0005 => (self.dispstat.dispstat() >> 8) as u8,
             0x0006 => self.vcount.ly(),
-            0x0008 => self.bg0cnt.bg_control() as u8,
-            0x0009 => (self.bg0cnt.bg_control() >> 8) as u8,
-            0x000A => self.bg1cnt.bg_control() as u8,
-            0x000B => (self.bg1cnt.bg_control() >> 8) as u8,
-            0x000C => self.bg2cnt.bg_control() as u8,
-            0x000D => (self.bg2cnt.bg_control() >> 8) as u8,
-            0x000E => self.bg3cnt.bg_control() as u8,
-            0x000F => (self.bg3cnt.bg_control() >> 8) as u8,
+            0x0008 => self.bgxcnt[0].bg_control() as u8,
+            0x0009 => (self.bgxcnt[0].bg_control() >> 8) as u8,
+            0x000A => self.bgxcnt[1].bg_control() as u8,
+            0x000B => (self.bgxcnt[1].bg_control() >> 8) as u8,
+            0x000C => self.bgxcnt[2].bg_control() as u8,
+            0x000D => (self.bgxcnt[2].bg_control() >> 8) as u8,
+            0x000E => self.bgxcnt[3].bg_control() as u8,
+            0x000F => (self.bgxcnt[3].bg_control() >> 8) as u8,
             _ => 0,
         }
     }
@@ -228,30 +239,30 @@ impl Mcu for Ppu {
             0x0001 => self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
             0x0004 => self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16),
             0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
-            0x0008 => self.bg0cnt.set_bg_control((self.bg0cnt.0 & 0xFF00) | value as u16),
-            0x0009 => self.bg0cnt.set_bg_control((value as u16) << 8 | (self.bg0cnt.0 & 0xFF)),
-            0x000A => self.bg1cnt.set_bg_control((self.bg1cnt.0 & 0xFF00) | value as u16),
-            0x000B => self.bg1cnt.set_bg_control((value as u16) << 8 | (self.bg1cnt.0 & 0xFF)),
-            0x000C => self.bg2cnt.set_bg_control((self.bg2cnt.0 & 0xFF00) | value as u16),
-            0x000D => self.bg2cnt.set_bg_control((value as u16) << 8 | (self.bg2cnt.0 & 0xFF)),
-            0x000E => self.bg3cnt.set_bg_control((self.bg3cnt.0 & 0xFF00) | value as u16),
-            0x000F => self.bg3cnt.set_bg_control((value as u16) << 8 | (self.bg3cnt.0 & 0xFF)),
-            0x0010 => self.bg0hofs = (self.bg0hofs & 0xFF00) | value as u16,
-            0x0011 => self.bg0hofs = (self.bg0hofs & 0xFF) | ((value as u16) << 8),
-            0x0012 => self.bg0vofs = (self.bg0vofs & 0xFF00) | value as u16,
-            0x0013 => self.bg0vofs = (self.bg0vofs & 0xFF) | ((value as u16) << 8),
-            0x0014 => self.bg1hofs = (self.bg1hofs & 0xFF00) | value as u16,
-            0x0015 => self.bg1hofs = (self.bg1hofs & 0xFF) | ((value as u16) << 8),
-            0x0016 => self.bg1vofs = (self.bg1vofs & 0xFF00) | value as u16,
-            0x0017 => self.bg1vofs = (self.bg1vofs & 0xFF) | ((value as u16) << 8),
-            0x0018 => self.bg2hofs = (self.bg2hofs & 0xFF00) | value as u16,
-            0x0019 => self.bg2hofs = (self.bg2hofs & 0xFF) | ((value as u16) << 8),
-            0x001A => self.bg2vofs = (self.bg2vofs & 0xFF00) | value as u16,
-            0x001B => self.bg2vofs = (self.bg2vofs & 0xFF) | ((value as u16) << 8),
-            0x001C => self.bg3hofs = (self.bg3hofs & 0xFF00) | value as u16,
-            0x001D => self.bg3hofs = (self.bg3hofs & 0xFF) | ((value as u16) << 8),
-            0x001E => self.bg3vofs = (self.bg3vofs & 0xFF00) | value as u16,
-            0x001F => self.bg3vofs = (self.bg3vofs & 0xFF) | ((value as u16) << 8),
+            0x0008 => self.bgxcnt[0].set_bg_control((self.bgxcnt[0].0 & 0xFF00) | value as u16),
+            0x0009 => self.bgxcnt[0].set_bg_control((value as u16) << 8 | (self.bgxcnt[0].0 & 0xFF)),
+            0x000A => self.bgxcnt[1].set_bg_control((self.bgxcnt[1].0 & 0xFF00) | value as u16),
+            0x000B => self.bgxcnt[1].set_bg_control((value as u16) << 8 | (self.bgxcnt[1].0 & 0xFF)),
+            0x000C => self.bgxcnt[2].set_bg_control((self.bgxcnt[2].0 & 0xFF00) | value as u16),
+            0x000D => self.bgxcnt[2].set_bg_control((value as u16) << 8 | (self.bgxcnt[2].0 & 0xFF)),
+            0x000E => self.bgxcnt[3].set_bg_control((self.bgxcnt[3].0 & 0xFF00) | value as u16),
+            0x000F => self.bgxcnt[3].set_bg_control((value as u16) << 8 | (self.bgxcnt[3].0 & 0xFF)),
+            0x0010 => self.bgxhofs[0] = (self.bgxhofs[0] & 0xFF00) | value as u16,
+            0x0011 => self.bgxhofs[0] = (self.bgxhofs[0] & 0xFF) | ((value as u16) << 8),
+            0x0012 => self.bgxvofs[0] = (self.bgxvofs[0] & 0xFF00) | value as u16,
+            0x0013 => self.bgxvofs[0] = (self.bgxvofs[0] & 0xFF) | ((value as u16) << 8),
+            0x0014 => self.bgxhofs[1] = (self.bgxhofs[1] & 0xFF00) | value as u16,
+            0x0015 => self.bgxhofs[1] = (self.bgxhofs[1] & 0xFF) | ((value as u16) << 8),
+            0x0016 => self.bgxvofs[1] = (self.bgxvofs[1] & 0xFF00) | value as u16,
+            0x0017 => self.bgxvofs[1] = (self.bgxvofs[1] & 0xFF) | ((value as u16) << 8),
+            0x0018 => self.bgxhofs[2] = (self.bgxhofs[2] & 0xFF00) | value as u16,
+            0x0019 => self.bgxhofs[2] = (self.bgxhofs[2] & 0xFF) | ((value as u16) << 8),
+            0x001A => self.bgxvofs[2] = (self.bgxvofs[2] & 0xFF00) | value as u16,
+            0x001B => self.bgxvofs[2] = (self.bgxvofs[2] & 0xFF) | ((value as u16) << 8),
+            0x001C => self.bgxhofs[3] = (self.bgxhofs[3] & 0xFF00) | value as u16,
+            0x001D => self.bgxhofs[3] = (self.bgxhofs[3] & 0xFF) | ((value as u16) << 8),
+            0x001E => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF00) | value as u16,
+            0x001F => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF) | ((value as u16) << 8),
             _ => {}
         }
     }
@@ -310,7 +321,7 @@ bitfield! {
         pub prio: u8 @ 0..=1,
         pub char_base_block: u8 @ 2..=3,
         pub mosaic: bool @ 6,
-        pub palettes: bool @ 7,
+        pub bpp: bool @ 7,
         pub screen_base_block: u8 @ 8..=12,
         pub disp_area_overflow: bool @ 13,
         pub screen_size: u8 @ 14..=15,

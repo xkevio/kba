@@ -28,8 +28,8 @@ fn main() -> SdlResult<()> {
     let window = video_subsystem
         .window(
             &format!("κba - {}", file_name),
-            LCD_WIDTH as u32 * 2,
-            LCD_HEIGHT as u32 * 2,
+            256 as u32 * 2,
+            256 as u32 * 2,
         )
         .position_centered()
         .build()
@@ -40,7 +40,7 @@ fn main() -> SdlResult<()> {
 
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
+        .create_texture_streaming(PixelFormatEnum::RGBA32, 256 as u32, 256 as u32)
         .map_err(|e| e.to_string())?;
 
     // Actual loop that runs the program and the emulator.

@@ -175,16 +175,16 @@ impl Arm7TDMI {
                 // Switch to ARM state.
                 self.cpsr.set_state(State::Arm);
                 self.cpsr.set_irq(true);
-                
+
                 // Switch to IRQ mode.
                 self.swap_regs(self.cpsr.mode().unwrap(), Mode::Irq);
                 self.cpsr.set_mode(Mode::Irq);
-        
+
                 // Save address of next instruction in r14_svc.
                 self.regs[14] = self.regs[15] + 4;
                 // Save CPSR in SPSR_svc.
                 self.spsr = cpsr;
-        
+
                 self.regs[15] = 0x18;
             }
         }
@@ -496,7 +496,7 @@ impl Arm7TDMI {
         // Switch to ARM state.
         self.cpsr.set_state(State::Arm);
         self.cpsr.set_irq(true);
-        
+
         // Switch to SVC mode.
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
         self.cpsr.set_mode(Mode::Supervisor);
@@ -760,7 +760,14 @@ impl Arm7TDMI {
     #[inline(always)]
     pub(super) fn lsl(&self, rm: u32, amount: u32, reg: bool) -> (u32, bool) {
         match reg {
-            false => (rm << amount, if amount == 0 { self.cpsr.c() } else { rm & (1 << (32 - amount)) != 0 }),
+            false => (
+                rm << amount,
+                if amount == 0 {
+                    self.cpsr.c()
+                } else {
+                    rm & (1 << (32 - amount)) != 0
+                },
+            ),
             true => {
                 if amount == 0 {
                     (rm, self.cpsr.c())
