@@ -122,12 +122,8 @@ impl Ppu {
                     .sorted_by_key(|(_, bg)| 3 - bg.prio())
                     .collect_vec();
 
-                let bg_enable = [
-                    self.dispcnt.bg0(),
-                    self.dispcnt.bg1(),
-                    self.dispcnt.bg2(),
-                    self.dispcnt.bg3(),
-                ];
+                #[rustfmt::skip]
+                let bg_enable = [self.dispcnt.bg0(), self.dispcnt.bg1(), self.dispcnt.bg2(), self.dispcnt.bg3()];
 
                 for (bg_i, bg_cnt) in sorted_bgs {
                     if bg_enable[*bg_i] {
@@ -145,36 +141,38 @@ impl Ppu {
                             .enumerate()
                         {
                             let tile_id = ((vram[tile_entry as usize + 1] as u16) << 8) | (vram[tile_entry as usize]) as u16;
-                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * 32 as usize /* * ((bg_cnt.palettes() as usize + 1) * 32)*/;
+                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
                             
                             let h_flip = tile_id & (1 << 10) != 0;
-                            let _v_flip = tile_id & (1 << 11) != 0;
+                            // let _v_flip = tile_id & (1 << 11) != 0;
                             let pal_idx = tile_id >> 12;
 
                             if !bg_cnt.bpp() {
-                                // 4 bits per pixel -> 16 palettes w/ 16 colors
+                                // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
                                 let tile_start_addr_ly = tile_start_addr + (y as usize % 8) * 4;
-                                for (i, px) in
-                                    (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate()
-                                {
-                                    let c0 = palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize & 0xF) * 2];
-                                    let c1 = palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize & 0xF) * 2 + 1)];
+                                for (i, px) in (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate() {
+                                    // Left pixel data is lower nibble of tile address.
+                                    let px_left = u16::from_be_bytes([
+                                        palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize & 0xF) * 2 + 1)],
+                                        palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize & 0xF) * 2],
+                                    ]);
 
-                                    let c2 = palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize >> 4) * 2];
-                                    let c3 = palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize >> 4) * 2 + 1)];
+                                    // Right pixel data is upper nibble of tile address.
+                                    let px_right = u16::from_be_bytes([
+                                        palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize >> 4) * 2 + 1)],
+                                        palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize >> 4) * 2],
+                                    ]); 
 
                                     let hori_x = if h_flip { 7 - i * 2 } else { i * 2 };
-
-                                    // TODO: combine these
                                     let buf_idx = y as usize * 256 + (x * 8) + hori_x;
-                                    let buf_idx_0 = y as usize * 256 + (x * 8) + if h_flip { hori_x - 1 } else { hori_x + 1 };
 
+                                    // Color 0 of palette is "transparent".
                                     if vram[px] & 0xF != 0 {
-                                        self.buffer[buf_idx] = u16::from_be_bytes([c1, c0]);
+                                        self.buffer[buf_idx] = px_left;
                                     }
 
                                     if vram[px] >> 4 != 0 {
-                                        self.buffer[buf_idx_0] = u16::from_be_bytes([c3, c2]);
+                                        self.buffer[buf_idx + (1 - h_flip as usize * 2)] = px_right;
                                     }
                                 }
                             } else {
