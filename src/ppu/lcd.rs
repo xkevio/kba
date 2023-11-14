@@ -26,8 +26,13 @@ pub struct Ppu {
     pub bgxhofs: [u16; 4],
     pub bgxvofs: [u16; 4],
 
-    #[derivative(Default(value = "[0; 256 * 256]"))]
-    pub buffer: [u16; 256 * 256],
+    #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
+    pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
+    #[derivative(Default(value = "vec![0; 512 * 512]"))]
+    pub internal_buf: Vec<u16>,
+
+    #[derivative(Default(value = "vec![0; 512]"))]
+    current_line: Vec<u16>,
 
     current_mode: Mode,
     cycle: u16,
@@ -47,10 +52,13 @@ impl Ppu {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    self.scanline(vram, palette_ram);
+                    if self.current_line.is_empty() {
+                        self.update_scanline(vram, palette_ram);
+                    }
 
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
+                    self.draw_line();
 
                     if self.dispstat.hblank_irq() {
                         iff.set_hblank(true);
@@ -113,9 +121,10 @@ impl Ppu {
     }
 
     /// Render one scanline fully.
-    fn scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
+    fn update_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
             0 => {
+                self.current_line = vec![0; 512];
                 let sorted_bgs = [0, 1, 2, 3]
                     .iter()
                     .zip(self.bgxcnt.iter())
@@ -127,13 +136,13 @@ impl Ppu {
 
                 for (bg_i, bg_cnt) in sorted_bgs {
                     if bg_enable[*bg_i] {
-                        // let _bg_hofs = self.bgxhofs[*bg_i];
-                        // let _bg_vofs = self.bgxvofs[*bg_i];
+                        let bg_hofs = self.bgxhofs[*bg_i];
+                        let bg_vofs = self.bgxvofs[*bg_i];
 
-                        let y = self.vcount.ly();
+                        let y = self.vcount.ly() as u16 + bg_vofs;
 
-                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 };
-                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + ((y as u32 / 8) * tiles_per_line * 2);
+                        let tiles_per_line = if dbg!(bg_cnt.screen_size()) % 2 == 0 { 32 } else { 64 };
+                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + ((y as u32 / 8) * tiles_per_line * 2); // todo tiles_per_line???
                         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
 
                         for (x, tile_entry) in (map_data..(map_data + tiles_per_line * 2))
@@ -144,12 +153,12 @@ impl Ppu {
                             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
                             
                             let h_flip = tile_id & (1 << 10) != 0;
-                            // let _v_flip = tile_id & (1 << 11) != 0;
+                            let v_flip = tile_id & (1 << 11) != 0;
                             let pal_idx = tile_id >> 12;
 
                             if !bg_cnt.bpp() {
                                 // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
-                                let tile_start_addr_ly = tile_start_addr + (y as usize % 8) * 4;
+                                let tile_start_addr_ly = tile_start_addr + if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 4;
                                 for (i, px) in (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate() {
                                     // Left pixel data is lower nibble of tile address.
                                     let px_left = u16::from_be_bytes([
@@ -164,15 +173,15 @@ impl Ppu {
                                     ]); 
 
                                     let hori_x = if h_flip { 7 - i * 2 } else { i * 2 };
-                                    let buf_idx = y as usize * 256 + (x * 8) + hori_x;
+                                    let buf_idx = /*y as usize * LCD_WIDTH +*/ (x * 8) + hori_x;
 
                                     // Color 0 of palette is "transparent".
                                     if vram[px] & 0xF != 0 {
-                                        self.buffer[buf_idx] = px_left;
+                                        self.current_line[buf_idx] = px_left;
                                     }
 
                                     if vram[px] >> 4 != 0 {
-                                        self.buffer[buf_idx + (1 - h_flip as usize * 2)] = px_right;
+                                        self.current_line[buf_idx + (1 - h_flip as usize * 2)] = px_right;
                                     }
                                 }
                             } else {
@@ -180,6 +189,9 @@ impl Ppu {
                                 todo!()
                             }
                         }
+
+                        // Apply bgxhofs.
+                        self.current_line.rotate_left(bg_hofs as usize);
                     }
                 }
             }
@@ -205,6 +217,17 @@ impl Ppu {
             }
             _ => {}
         }
+    }
+
+    /// Draw the scanline by placing it into the buffer.
+    fn draw_line(&mut self) {
+        let y = self.vcount.ly() as usize;
+
+        for i in 0..LCD_WIDTH {
+            self.internal_buf[y * LCD_WIDTH + i] = self.current_line[i];
+        }
+
+        self.current_line.clear();
     }
 }
 

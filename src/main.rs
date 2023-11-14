@@ -28,8 +28,8 @@ fn main() -> SdlResult<()> {
     let window = video_subsystem
         .window(
             &format!("κba - {}", file_name),
-            256 as u32 * 2,
-            256 as u32 * 2,
+            LCD_WIDTH as u32 * 2,
+            LCD_HEIGHT as u32 * 2,
         )
         .position_centered()
         .build()
@@ -40,7 +40,7 @@ fn main() -> SdlResult<()> {
 
     let texture_creator = canvas.texture_creator();
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGBA32, 256 as u32, 256 as u32)
+        .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
         .map_err(|e| e.to_string())?;
 
     // Actual loop that runs the program and the emulator.
@@ -69,7 +69,7 @@ fn main() -> SdlResult<()> {
 
         // Update frame and treat everything as BG Mode 3 or 4 for now.
         texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-            for (i, px) in kba.cpu.bus.ppu.buffer.iter().enumerate() {
+            for (i, px) in kba.cpu.bus.ppu.internal_buf[0..(LCD_WIDTH * LCD_HEIGHT)].iter().enumerate() {
                 let [r, g, b, a] = rgb555_to_color(*px).to_be_bytes();
                 buffer[i * 4] = r;
                 buffer[i * 4 + 1] = g;
