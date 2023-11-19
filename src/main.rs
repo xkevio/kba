@@ -69,8 +69,15 @@ fn main() -> SdlResult<()> {
 
         // Update frame and treat everything as BG Mode 3 or 4 for now.
         texture.with_lock(None, |buffer: &mut [u8], _: usize| {
-            for (i, px) in kba.cpu.bus.ppu.internal_buf[0..(LCD_WIDTH * LCD_HEIGHT)].iter().enumerate() {
-                let [r, g, b, a] = rgb555_to_color(*px).to_be_bytes();
+            for (i, px) in kba.cpu.bus.ppu.internal_buf[0..(LCD_WIDTH * LCD_HEIGHT)]
+                .iter()
+                .enumerate()
+            {
+                let [r, g, b, a] = match px {
+                    Some(color) => rgb555_to_color(*color).to_be_bytes(),
+                    None => [0, 0, 0, 255],
+                }; //rgb555_to_color(*px).to_be_bytes();
+
                 buffer[i * 4] = r;
                 buffer[i * 4 + 1] = g;
                 buffer[i * 4 + 2] = b;

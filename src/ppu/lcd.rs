@@ -28,11 +28,11 @@ pub struct Ppu {
 
     #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
-    #[derivative(Default(value = "vec![0; 512 * 512]"))]
-    pub internal_buf: Vec<u16>,
+    #[derivative(Default(value = "vec![None; 512 * 512]"))]
+    pub internal_buf: Vec<Option<u16>>,
 
-    #[derivative(Default(value = "vec![0; 512]"))]
-    current_line: Vec<u16>,
+    #[derivative(Default(value = "[[None; 512]; 4]"))]
+    current_line: [[Option<u16>; 512]; 4],
 
     current_mode: Mode,
     cycle: u16,
@@ -52,9 +52,9 @@ impl Ppu {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    if self.current_line.is_empty() {
-                        self.update_scanline(vram, palette_ram);
-                    }
+                    // if self.current_line.iter().any(|o| o.iter().all(|oo| oo.is_none())) {
+                    self.update_scanline(vram, palette_ram);
+                    // }
 
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
@@ -124,34 +124,52 @@ impl Ppu {
     fn update_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
             0 => {
-                self.current_line = vec![0; 512];
-                let sorted_bgs = [0, 1, 2, 3]
-                    .iter()
-                    .zip(self.bgxcnt.iter())
-                    .sorted_by_key(|(_, bg)| 3 - bg.prio())
-                    .collect_vec();
-
                 #[rustfmt::skip]
                 let bg_enable = [self.dispcnt.bg0(), self.dispcnt.bg1(), self.dispcnt.bg2(), self.dispcnt.bg3()];
+                self.current_line = [[None; 512]; 4];
 
-                for (bg_i, bg_cnt) in sorted_bgs {
-                    if bg_enable[*bg_i] {
-                        let bg_hofs = self.bgxhofs[*bg_i];
-                        let bg_vofs = self.bgxvofs[*bg_i];
+                for (bg_i, bg_enable) in bg_enable.iter().enumerate() {
+                    if *bg_enable {
+                        let bg_cnt = self.bgxcnt[bg_i];
+                        let bg_hofs = self.bgxhofs[bg_i];
+                        let bg_vofs = self.bgxvofs[bg_i];
 
                         let y = self.vcount.ly() as u16 + bg_vofs;
+                        let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 };
 
-                        let tiles_per_line = if dbg!(bg_cnt.screen_size()) % 2 == 0 { 32 } else { 64 };
-                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800 + ((y as u32 / 8) * tiles_per_line * 2); // todo tiles_per_line???
+                        // let sbb_off = match bg_cnt.screen_size() {
+                        //     0 => 0,
+                        //     1 => (bg_hofs % 512) / 256,
+                        //     2 => (y % 256) / 256,
+                        //     3 => 0, // todo
+                        //     _ => unreachable!(),
+                        // } as u32;
+
+                        let map_data = bg_cnt.screen_base_block() as u32 * 0x800
+                            // + sbb_off * 0x800
+                            + (((y as u32 / 8) % 32)
+                                * tiles_per_line
+                                * (2 >> (bg_cnt.screen_size() as u32 % 2)));
+                            // + 2 * (bg_hofs as u32 / 8);
+
                         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
 
                         for (x, tile_entry) in (map_data..(map_data + tiles_per_line * 2))
                             .step_by(2)
                             .enumerate()
                         {
+                            // let sbb_off = match bg_cnt.screen_size() {
+                            //     0 => 0,
+                            //     1 => ((x as u16 * 8 + bg_hofs) % 512) / 256,
+                            //     2 => (y % 256) / 256,
+                            //     3 => 0, // todo
+                            //     _ => unreachable!(),
+                            // } as u32;
+                            // let tile_entry = tile_entry + sbb_off * 0x800;
+
                             let tile_id = ((vram[tile_entry as usize + 1] as u16) << 8) | (vram[tile_entry as usize]) as u16;
                             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
-                            
+
                             let h_flip = tile_id & (1 << 10) != 0;
                             let v_flip = tile_id & (1 << 11) != 0;
                             let pal_idx = tile_id >> 12;
@@ -159,7 +177,9 @@ impl Ppu {
                             if !bg_cnt.bpp() {
                                 // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
                                 let tile_start_addr_ly = tile_start_addr + if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 4;
-                                for (i, px) in (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate() {
+                                for (i, px) in
+                                    (tile_start_addr_ly..(tile_start_addr_ly + 4)).enumerate()
+                                {
                                     // Left pixel data is lower nibble of tile address.
                                     let px_left = u16::from_be_bytes([
                                         palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize & 0xF) * 2 + 1)],
@@ -170,28 +190,25 @@ impl Ppu {
                                     let px_right = u16::from_be_bytes([
                                         palette_ram[(pal_idx as usize * 0x20) | ((vram[px] as usize >> 4) * 2 + 1)],
                                         palette_ram[(pal_idx as usize * 0x20) | (vram[px] as usize >> 4) * 2],
-                                    ]); 
+                                    ]);
 
                                     let hori_x = if h_flip { 7 - i * 2 } else { i * 2 };
-                                    let buf_idx = /*y as usize * LCD_WIDTH +*/ (x * 8) + hori_x;
+                                    let buf_idx = (x * 8) + hori_x;
 
                                     // Color 0 of palette is "transparent".
                                     if vram[px] & 0xF != 0 {
-                                        self.current_line[buf_idx] = px_left;
+                                        self.current_line[bg_i][buf_idx] = Some(px_left);
                                     }
 
                                     if vram[px] >> 4 != 0 {
-                                        self.current_line[buf_idx + (1 - h_flip as usize * 2)] = px_right;
+                                        self.current_line[bg_i] [buf_idx + (1 - h_flip as usize * 2)] = Some(px_right);
                                     }
                                 }
                             } else {
                                 // 8 bits per pixel -> 1 palette w/ 256 colors
-                                todo!()
+                                todo!("8 bpp")
                             }
                         }
-
-                        // Apply bgxhofs.
-                        self.current_line.rotate_left(bg_hofs as usize);
                     }
                 }
             }
@@ -223,11 +240,45 @@ impl Ppu {
     fn draw_line(&mut self) {
         let y = self.vcount.ly() as usize;
 
-        for i in 0..LCD_WIDTH {
-            self.internal_buf[y * LCD_WIDTH + i] = self.current_line[i];
+        let sorted_bgs = [0, 1, 2, 3]
+            .iter()
+            .sorted_by_key(|&&i| self.bgxcnt[i].prio())
+            .collect_vec();
+
+        let bg_enable = [
+            self.dispcnt.bg0(),
+            self.dispcnt.bg1(),
+            self.dispcnt.bg2(),
+            self.dispcnt.bg3(),
+        ];
+
+        // TODO: works but wtf
+        let mix = sorted_bgs.into_iter().filter(|&&idx| bg_enable[idx]).fold(
+            vec![None; 512],
+            |acc, f| {
+                self.current_line[*f].rotate_left(self.bgxhofs[*f] as usize % 512);
+                acc.iter()
+                    .zip(self.current_line[*f])
+                    .map(|(a, b)| a.or(b))
+                    .collect_vec()
+            },
+        );
+
+        for x in 0..LCD_WIDTH {
+            self.internal_buf[y * LCD_WIDTH + x] = mix[x];
         }
 
-        self.current_line.clear();
+        // for idx in sorted_bgs {
+        //     if !bg_enable[*idx] {
+        //         continue;
+        //     }
+
+        //     for x in 0..LCD_WIDTH {
+        //         self.internal_buf[y * LCD_WIDTH + x] = self.current_line[*idx][(x + self.bgxhofs[*idx] as usize) % 512];
+        //     }
+
+        //     // self.current_line[*idx].fill(Some(0));
+        // }
     }
 }
 
