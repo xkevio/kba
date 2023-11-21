@@ -134,7 +134,7 @@ impl Ppu {
                         let bg_hofs = self.bgxhofs[bg_i];
                         let bg_vofs = self.bgxvofs[bg_i];
 
-                        let y = self.vcount.ly() as u16 + bg_vofs;
+                        let y = (self.vcount.ly() as u16 + bg_vofs) % 256;
                         // let tiles_per_line = if bg_cnt.screen_size() % 2 == 0 { 32 } else { 64 };
 
                         // let map_data = bg_cnt.screen_base_block() as u32 * 0x800;
@@ -158,7 +158,7 @@ impl Ppu {
                             let map_data = bg_cnt.screen_base_block() as u32 * 0x800
                                 + sbb_off * 0x800
                                 + 2 * (
-                                    32 * (y as u32 / 8) + ((x as u32 + bg_hofs as u32) / 8)
+                                    32 * (y as u32 / 8) + (((x as u32 + bg_hofs as u32) % 256) / 8)
                                 );
 
                             
@@ -190,21 +190,24 @@ impl Ppu {
 
                             if !bg_cnt.bpp() {
                                 // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
-                                let tile_start_addr_ly = tile_start_addr + if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 1;
-                                let px_idx = if (x + bg_hofs as usize) & 1 == 0 {
-                                    vram[tile_start_addr_ly] & 0xF
-                                } else {
-                                    vram[tile_start_addr_ly] >> 4
-                                } as usize;
+                                let buf_idx = if h_flip { 7 - ((x + bg_hofs as usize) % 8) } else { (x + bg_hofs as usize) % 8 };
+                                let t_off = if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 8 + buf_idx;
+                                let tile_start_addr_ly = tile_start_addr + t_off / 2;
+
+                                let px_idx = ((vram[tile_start_addr_ly] >> ((t_off & 1) * 4)) & 0xF) as usize;
+                                // let px_idx = if a & 1 == 0 {
+                                //     vram[tile_start_addr_ly] & 0xF
+                                // } else {
+                                //     vram[tile_start_addr_ly] >> 4
+                                // } as usize;
 
                                 let px = u16::from_be_bytes([
                                     palette_ram[(pal_idx as usize * 0x20) | px_idx * 2 + 1],
                                     palette_ram[(pal_idx as usize * 0x20) | px_idx * 2],
                                 ]);
 
-                                let buf_idx = if h_flip { 7 - (x % 8) } else { x % 8 };
-                                if vram[tile_start_addr_ly] != 0 {
-                                    self.current_line[bg_i][buf_idx] = Some(px);
+                                if px_idx != 0 {
+                                    self.current_line[bg_i][x] = Some(px);
                                 }
 
                                 // for (i, px) in
@@ -286,7 +289,7 @@ impl Ppu {
         let mix = sorted_bgs.into_iter().filter(|&&idx| bg_enable[idx]).fold(
             vec![None; 512],
             |acc, f| {
-                self.current_line[*f].rotate_left(self.bgxhofs[*f] as usize % 512);
+                // self.current_line[*f].rotate_left(self.bgxhofs[*f] as usize % 512);
                 acc.iter()
                     .zip(self.current_line[*f])
                     .map(|(a, b)| a.or(b))

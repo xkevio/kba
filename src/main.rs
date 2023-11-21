@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use gba::{Gba, LCD_HEIGHT, LCD_WIDTH};
-use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
+use paste::paste;
+use sdl2::{event::Event, keyboard::Scancode, pixels::PixelFormatEnum};
 
 mod arm;
 mod gba;
@@ -11,6 +12,18 @@ mod mmu;
 mod ppu;
 
 type SdlResult<T> = Result<T, String>;
+
+macro_rules! process_scancodes {
+    ($kba:expr, $state:expr; $($name:ident => $code:ident),*) => {
+        paste! {
+            $(
+                if $state.is_scancode_pressed(Scancode::$code) {
+                    $kba.cpu.bus.key_input.[<set_ $name>](false);
+                }
+            )*
+        }
+    };
+}
 
 fn main() -> SdlResult<()> {
     let rom_path = std::env::args().nth(1).expect("A rom has to be specified!");
@@ -48,19 +61,12 @@ fn main() -> SdlResult<()> {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'main,
-                Event::KeyDown { keycode, .. } => match keycode {
-                    Some(Keycode::Return) => kba.cpu.bus.key_input.set_start(false),
-                    Some(Keycode::Tab) => kba.cpu.bus.key_input.set_select(false),
-                    Some(Keycode::Up) => kba.cpu.bus.key_input.set_up(false),
-                    Some(Keycode::Down) => kba.cpu.bus.key_input.set_down(false),
-                    Some(Keycode::Right) => kba.cpu.bus.key_input.set_right(false),
-                    Some(Keycode::Left) => kba.cpu.bus.key_input.set_left(false),
-                    Some(_) => {}
-                    None => unreachable!(),
-                },
                 _ => {}
             }
         }
+
+        let keyboard_state = event_pump.keyboard_state();
+        process_scancodes!(kba, keyboard_state; up => Up, left => Left, down => Down, right => Right, start => Return);
 
         // For now, update every 266_666 cycles (60 frames).
         while kba.cycles < 266_666 {
