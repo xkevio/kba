@@ -52,9 +52,7 @@ impl Ppu {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    // if self.current_line.iter().any(|o| o.iter().all(|oo| oo.is_none())) {
                     self.update_scanline(vram, palette_ram);
-                    // }
 
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
@@ -124,64 +122,8 @@ impl Ppu {
     fn update_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
             0 => {
-                #[rustfmt::skip]
-                let bg_enable = [self.dispcnt.bg0(), self.dispcnt.bg1(), self.dispcnt.bg2(), self.dispcnt.bg3()];
-                self.current_line = [[None; 512]; 4];
-
-                for (bg_i, bg_enable) in bg_enable.iter().enumerate() {
-                    if *bg_enable {
-                        let bg_cnt = self.bgxcnt[bg_i];
-                        let bg_hofs = self.bgxhofs[bg_i];
-                        let bg_vofs = self.bgxvofs[bg_i];
-
-                        let y = (self.vcount.ly() as u16 + bg_vofs) % 256;
-                        let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
-
-                        for x in 0..LCD_WIDTH {
-                            let sbb_off = match bg_cnt.screen_size() {
-                                0 => 0,
-                                1 => ((x + bg_hofs as usize) % 512) / 256,
-                                2 => (y as usize % 512) / 256,
-                                3 => 0, // todo
-                                _ => unreachable!(),
-                            } as u32;
-
-                            let map_data = bg_cnt.screen_base_block() as u32 * 0x800
-                                + sbb_off * 0x800
-                                + 2 * (
-                                    32 * (y as u32 / 8) + (((x as u32 + bg_hofs as u32) % 256) / 8)
-                                );
-
-                            let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
-                            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
-
-                            let h_flip = tile_id & (1 << 10) != 0;
-                            let v_flip = tile_id & (1 << 11) != 0;
-                            let pal_idx = tile_id >> 12;
-
-                            if !bg_cnt.bpp() {
-                                // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
-                                let buf_idx = if h_flip { 7 - ((x + bg_hofs as usize) % 8) } else { (x + bg_hofs as usize) % 8 };
-                                let t_off = if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 8 + buf_idx;
-                                let tile_start_addr_ly = tile_start_addr + t_off / 2;
-
-                                let px_idx = ((vram[tile_start_addr_ly] >> ((t_off & 1) * 4)) & 0xF) as usize;
-
-                                let px = u16::from_be_bytes([
-                                    palette_ram[(pal_idx as usize * 0x20) | px_idx * 2 + 1],
-                                    palette_ram[(pal_idx as usize * 0x20) | px_idx * 2],
-                                ]);
-
-                                if px_idx != 0 {
-                                    self.current_line[bg_i][x] = Some(px);
-                                }
-                            } else {
-                                // 8 bits per pixel -> 1 palette w/ 256 colors
-                                todo!("8 bpp")
-                            }
-                        }
-                    }
-                }
+                self.render_text_bg(vram, palette_ram);
+                // render sprites
             }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
@@ -204,6 +146,67 @@ impl Ppu {
                 }
             }
             _ => {}
+        }
+    }
+
+    #[rustfmt::skip]
+    fn render_text_bg(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        let bg_enable = [self.dispcnt.bg0(), self.dispcnt.bg1(), self.dispcnt.bg2(), self.dispcnt.bg3()];
+        self.current_line = [[None; 512]; 4];
+
+        for (bg_i, bg_enable) in bg_enable.iter().enumerate() {
+            if *bg_enable {
+                let bg_cnt = self.bgxcnt[bg_i];
+                let bg_hofs = self.bgxhofs[bg_i];
+                let bg_vofs = self.bgxvofs[bg_i];
+
+                let y = (self.vcount.ly() as u16 + bg_vofs) % 256;
+                let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+
+                for x in 0..LCD_WIDTH {
+                    let sbb_off = match bg_cnt.screen_size() {
+                        0 => 0,
+                        1 => ((x + bg_hofs as usize) % 512) / 256,
+                        2 => (y as usize % 512) / 256,
+                        3 => 0, // todo
+                        _ => unreachable!(),
+                    } as u32;
+
+                    let map_data = bg_cnt.screen_base_block() as u32 * 0x800
+                        + sbb_off * 0x800
+                        + 2 * (
+                            32 * (y as u32 / 8) + (((x as u32 + bg_hofs as u32) % 256) / 8)
+                        );
+
+                    let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
+                    let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
+
+                    let h_flip = tile_id & (1 << 10) != 0;
+                    let v_flip = tile_id & (1 << 11) != 0;
+                    let pal_idx = tile_id >> 12;
+
+                    if !bg_cnt.bpp() {
+                        // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
+                        let buf_idx = if h_flip { 7 - ((x + bg_hofs as usize) % 8) } else { (x + bg_hofs as usize) % 8 };
+                        let t_off = if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 8 + buf_idx;
+                        let tile_start_addr_ly = tile_start_addr + t_off / 2;
+
+                        let px_idx = ((vram[tile_start_addr_ly] >> ((t_off & 1) * 4)) & 0xF) as usize;
+
+                        let px = u16::from_be_bytes([
+                            palette_ram[(pal_idx as usize * 0x20) | px_idx * 2 + 1],
+                            palette_ram[(pal_idx as usize * 0x20) | px_idx * 2],
+                        ]);
+
+                        if px_idx != 0 {
+                            self.current_line[bg_i][x] = Some(px);
+                        }
+                    } else {
+                        // 8 bits per pixel -> 1 palette w/ 256 colors
+                        todo!("8 bpp")
+                    }
+                }
+            }
         }
     }
 
