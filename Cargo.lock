@@ -56,6 +56,7 @@ dependencies = [
  "paste",
  "proc-bitfield",
  "sdl2",
+ "seq-macro",
 ]
 
 [[package]]
@@ -136,6 +137,12 @@ dependencies = [
  "libc",
  "version-compare",
 ]
+
+[[package]]
+name = "seq-macro"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3f0bf26fd526d2a95683cd0f87bf103b8539e2ca1ef48ce002d67aad59aa0b4"
 
 [[package]]
 name = "static_assertions"

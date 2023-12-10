@@ -1,6 +1,7 @@
 use derivative::Derivative;
 use itertools::Itertools;
-use proc_bitfield::bitfield;
+use proc_bitfield::{bitfield, BitRange};
+use seq_macro::seq;
 
 use crate::{
     gba::{LCD_HEIGHT, LCD_WIDTH},
@@ -26,10 +27,8 @@ pub struct Ppu {
     pub bgxhofs: [u16; 4],
     pub bgxvofs: [u16; 4],
 
-    #[derivative(Default(value = "[0; LCD_WIDTH * LCD_HEIGHT]"))]
-    pub buffer: [u16; LCD_WIDTH * LCD_HEIGHT],
-    #[derivative(Default(value = "vec![None; 512 * 512]"))]
-    pub internal_buf: Vec<Option<u16>>,
+    #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
+    pub buffer: Vec<Option<u16>>,
 
     #[derivative(Default(value = "[[None; 512]; 4]"))]
     current_line: [[Option<u16>; 512]; 4],
@@ -53,10 +52,12 @@ impl Ppu {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
                     self.update_scanline(vram, palette_ram);
+                    if self.dispcnt.bg_mode() < 3 {
+                        self.draw_bg_line();
+                    }
 
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
-                    self.draw_line();
 
                     if self.dispstat.hblank_irq() {
                         iff.set_hblank(true);
@@ -118,19 +119,28 @@ impl Ppu {
         self.cycle += 1;
     }
 
-    /// Render one scanline fully.
+    /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
     fn update_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
         match self.dispcnt.bg_mode() {
             0 => {
-                self.render_text_bg(vram, palette_ram);
-                // render sprites
+                self.current_line = [[None; 512]; 4];
+
+                // Render backgrounds by iterating and
+                // checking which are enabled via seq-macro.
+                seq!(BG in 0..=3 {
+                    if self.dispcnt.bg~BG() {
+                        self.render_text_bg::<BG>(vram, palette_ram);
+                    }
+                });
+
+                // todo: render sprites
             }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
                 let line = &vram[start..(start + 480)];
 
                 for (i, px) in line.chunks(2).enumerate() {
-                    self.buffer[(start / 2) + i] = u16::from_be_bytes([px[1], px[0]]);
+                    self.buffer[(start / 2) + i] = Some(u16::from_be_bytes([px[1], px[0]]));
                 }
             }
             4 => {
@@ -142,7 +152,7 @@ impl Ppu {
                     let c0 = palette_ram[*px as usize * 2];
                     let c1 = palette_ram[*px as usize * 2 + 1];
 
-                    self.buffer[start + i] = u16::from_be_bytes([c1, c0]);
+                    self.buffer[start + i] = Some(u16::from_be_bytes([c1, c0]));
                 }
             }
             _ => {}
@@ -150,109 +160,94 @@ impl Ppu {
     }
 
     #[rustfmt::skip]
-    fn render_text_bg(&mut self, vram: &[u8], palette_ram: &[u8]) {
-        let bg_enable = [self.dispcnt.bg0(), self.dispcnt.bg1(), self.dispcnt.bg2(), self.dispcnt.bg3()];
-        self.current_line = [[None; 512]; 4];
+    fn render_text_bg<const BG: usize>(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        let bg_cnt = self.bgxcnt[BG];
+        let bg_hofs = self.bgxhofs[BG];
+        let bg_vofs = self.bgxvofs[BG];
 
-        for (bg_i, bg_enable) in bg_enable.iter().enumerate() {
-            if *bg_enable {
-                let bg_cnt = self.bgxcnt[bg_i];
-                let bg_hofs = self.bgxhofs[bg_i];
-                let bg_vofs = self.bgxvofs[bg_i];
+        let y_off = (self.vcount.ly() as u16 + bg_vofs) % 256;
+        let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
 
-                let y = (self.vcount.ly() as u16 + bg_vofs) % 256;
-                let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+        for x in 0..LCD_WIDTH {
+            let x_off = (x + bg_hofs as usize) % 256;
+            let sbb_off = match bg_cnt.screen_size() {
+                0 => 0,
+                1 => ((x + bg_hofs as usize) % 512) / 256,
+                2 => (y_off as usize % 512) / 256,
+                3 => (((x + bg_hofs as usize) % 512) / 256) + ((y_off as usize % 512) / 256),
+                _ => unreachable!(),
+            } as u32;
 
-                for x in 0..LCD_WIDTH {
-                    let sbb_off = match bg_cnt.screen_size() {
-                        0 => 0,
-                        1 => ((x + bg_hofs as usize) % 512) / 256,
-                        2 => (y as usize % 512) / 256,
-                        3 => 0, // todo
-                        _ => unreachable!(),
-                    } as u32;
+            // Offset map_data screenblock if x > 255 or y > 255 depending on screen size.
+            // Additionally, offset address by tile with x and y akin to (width * y + x).
+            let map_data = bg_cnt.screen_base_block() as u32 * 0x800
+                + sbb_off * 0x800
+                + 2 * (32 * (y_off as u32 / 8) + (x_off as u32 / 8));
 
-                    let map_data = bg_cnt.screen_base_block() as u32 * 0x800
-                        + sbb_off * 0x800
-                        + 2 * (
-                            32 * (y as u32 / 8) + (((x as u32 + bg_hofs as u32) % 256) / 8)
-                        );
+            let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
+            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
 
-                    let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
-                    let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
+            let h_flip = tile_id & (1 << 10) != 0;
+            let v_flip = tile_id & (1 << 11) != 0;
+            let pal_idx = tile_id >> 12;
 
-                    let h_flip = tile_id & (1 << 10) != 0;
-                    let v_flip = tile_id & (1 << 11) != 0;
-                    let pal_idx = tile_id >> 12;
+            // Rendering starts here; based on the bits per pixel we address the palette RAM differently.
+            // `tile_off` is a similar offset idea to the one in `map_data` but on pixel granularity.
+            let x_flip = if h_flip { 7 - (x_off % 8) } else { x_off % 8 };
+            let tile_off = if v_flip { 7 - (y_off as usize % 8) } else { y_off as usize % 8 } * 8 + x_flip;
 
-                    if !bg_cnt.bpp() {
-                        // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
-                        let buf_idx = if h_flip { 7 - ((x + bg_hofs as usize) % 8) } else { (x + bg_hofs as usize) % 8 };
-                        let t_off = if v_flip { 7 - (y as usize % 8) } else { y as usize % 8 } * 8 + buf_idx;
-                        let tile_start_addr_ly = tile_start_addr + t_off / 2;
+            let tile_addr = tile_start_addr + tile_off / (2 >> bg_cnt.bpp() as usize);
+            let (px_idx, px) = if !bg_cnt.bpp() {
+                // 4 bits per pixel -> 16 palettes w/ 16 colors (1 byte holds the data for two neighboring pixels).
+                let px_idx = ((vram[tile_addr] >> ((tile_off & 1) * 4)) & 0xF) as usize;
 
-                        let px_idx = ((vram[tile_start_addr_ly] >> ((t_off & 1) * 4)) & 0xF) as usize;
+                (px_idx, u16::from_be_bytes([
+                    palette_ram[(pal_idx as usize * 0x20) | px_idx * 2 + 1],
+                    palette_ram[(pal_idx as usize * 0x20) | px_idx * 2],
+                ]))
+            } else {
+                // 8 bits per pixel -> 1 palette w/ 256 colors
+                let px_idx = vram[tile_addr] as usize;
 
-                        let px = u16::from_be_bytes([
-                            palette_ram[(pal_idx as usize * 0x20) | px_idx * 2 + 1],
-                            palette_ram[(pal_idx as usize * 0x20) | px_idx * 2],
-                        ]);
+                (px_idx, u16::from_be_bytes([
+                    palette_ram[px_idx * 2 + 1],
+                    palette_ram[px_idx * 2],
+                ]))
+            };
 
-                        if px_idx != 0 {
-                            self.current_line[bg_i][x] = Some(px);
-                        }
-                    } else {
-                        // 8 bits per pixel -> 1 palette w/ 256 colors
-                        todo!("8 bpp")
-                    }
-                }
+            if px_idx != 0 {
+                self.current_line[BG][x] = Some(px);
             }
         }
     }
 
-    /// Draw the scanline by placing it into the buffer.
-    fn draw_line(&mut self) {
+    /// Draw the scanline by placing it into the buffer. (For mode 0, 1, 2).
+    fn draw_bg_line(&mut self) {
         let y = self.vcount.ly() as usize;
 
+        // Get bits 8..=11 (const `END` parameter has to be one past) to get bg-enable bits.
+        let is_bg_enabled: u8 = self.dispcnt.0.bit_range::<8, 12>();
         let sorted_bgs = [0, 1, 2, 3]
             .iter()
             .sorted_by_key(|&&i| self.bgxcnt[i].prio())
+            .cloned()
             .collect_vec();
 
-        let bg_enable = [
-            self.dispcnt.bg0(),
-            self.dispcnt.bg1(),
-            self.dispcnt.bg2(),
-            self.dispcnt.bg3(),
-        ];
-
-        // TODO: works but wtf
-        let mix = sorted_bgs.into_iter().filter(|&&idx| bg_enable[idx]).fold(
-            vec![None; 512],
-            |acc, f| {
-                // self.current_line[*f].rotate_left(self.bgxhofs[*f] as usize % 512);
-                acc.iter()
-                    .zip(self.current_line[*f])
-                    .map(|(a, b)| a.or(b))
-                    .collect_vec()
-            },
-        );
-
-        for x in 0..LCD_WIDTH {
-            self.internal_buf[y * LCD_WIDTH + x] = mix[x];
+        let mut render_line = vec![None; 512];
+        for bg in sorted_bgs
+            .iter()
+            .filter(|&&x| is_bg_enabled & (1 << x) != 0)
+        {
+            render_line = render_line
+                .iter()
+                .zip(self.current_line[*bg])
+                .map(|(a, b)| a.or(b))
+                .collect();
         }
 
-        // for idx in sorted_bgs {
-        //     if !bg_enable[*idx] {
-        //         continue;
-        //     }
-
-        //     for x in 0..LCD_WIDTH {
-        //         self.internal_buf[y * LCD_WIDTH + x] = self.current_line[*idx][(x + self.bgxhofs[*idx] as usize) % 512];
-        //     }
-
-        //     // self.current_line[*idx].fill(Some(0));
-        // }
+        for x in 0..LCD_WIDTH {
+            self.buffer[y * LCD_WIDTH + x] = render_line[x];
+        }
     }
 }
 
