@@ -66,11 +66,11 @@ fn main() -> SdlResult<()> {
         }
 
         let keyboard_state = event_pump.keyboard_state();
-        process_scancodes!(kba, keyboard_state; 
-            up => Up, 
-            left => Left, 
-            down => Down, 
-            right => Right, 
+        process_scancodes!(kba, keyboard_state;
+            up => Up,
+            left => Left,
+            down => Down,
+            right => Right,
             start => Return
         );
 

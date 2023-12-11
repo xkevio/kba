@@ -228,12 +228,9 @@ impl Ppu {
         let is_bg_enabled: u8 = self.dispcnt.0.bit_range::<8, 12>();
         let mut bg_sorted = [0, 1, 2, 3];
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
-        
+
         let mut render_line = vec![None; 512];
-        for bg in bg_sorted
-            .iter()
-            .filter(|&&x| is_bg_enabled & (1 << x) != 0)
-        {
+        for bg in bg_sorted.iter().filter(|&&x| is_bg_enabled & (1 << x) != 0) {
             render_line = render_line
                 .iter()
                 .zip(self.current_line[*bg])
