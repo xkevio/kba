@@ -1,5 +1,4 @@
 use derivative::Derivative;
-use itertools::Itertools;
 use proc_bitfield::{bitfield, BitRange};
 use seq_macro::seq;
 
@@ -227,14 +226,11 @@ impl Ppu {
 
         // Get bits 8..=11 (const `END` parameter has to be one past) to get bg-enable bits.
         let is_bg_enabled: u8 = self.dispcnt.0.bit_range::<8, 12>();
-        let sorted_bgs = [0, 1, 2, 3]
-            .iter()
-            .sorted_by_key(|&&i| self.bgxcnt[i].prio())
-            .cloned()
-            .collect_vec();
-
+        let mut bg_sorted = [0, 1, 2, 3];
+        bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
+        
         let mut render_line = vec![None; 512];
-        for bg in sorted_bgs
+        for bg in bg_sorted
             .iter()
             .filter(|&&x| is_bg_enabled & (1 << x) != 0)
         {

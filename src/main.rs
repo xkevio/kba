@@ -66,7 +66,13 @@ fn main() -> SdlResult<()> {
         }
 
         let keyboard_state = event_pump.keyboard_state();
-        process_scancodes!(kba, keyboard_state; up => Up, left => Left, down => Down, right => Right, start => Return);
+        process_scancodes!(kba, keyboard_state; 
+            up => Up, 
+            left => Left, 
+            down => Down, 
+            right => Right, 
+            start => Return
+        );
 
         // For now, update every 266_666 cycles (60 frames).
         while kba.cycles < 266_666 {
