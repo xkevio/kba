@@ -56,7 +56,7 @@ impl From<u64> for Sprite {
             bpp: obj0 & (1 << 13) != 0,
             shape: ObjShape::try_from(obj0 >> 14).unwrap(),
 
-            rot_scale_param: obj1 & 0x3E00,
+            rot_scale_param: (obj1 & 0x3E00) >> 9,
             h_flip: obj1 & (1 << 12) != 0,
             v_flip: obj1 & (1 << 13) != 0,
             size: (obj1 >> 14) as u8,
