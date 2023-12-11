@@ -50,7 +50,7 @@ impl Ppu {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    self.update_scanline(vram, palette_ram);
+                    self.update_bg_scanline(vram, palette_ram);
                     if self.dispcnt.bg_mode() < 3 {
                         self.draw_bg_line();
                     }
@@ -118,8 +118,11 @@ impl Ppu {
         self.cycle += 1;
     }
 
+    // TODO: fn draw_frame(&self) to combine update&draw methods for bgs and sprites.
+
     /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
-    fn update_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
+    fn update_bg_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        // Render backgrounds.
         match self.dispcnt.bg_mode() {
             0 => {
                 self.current_line = [[None; 512]; 4];
@@ -132,7 +135,6 @@ impl Ppu {
                     }
                 });
 
-                // todo: render sprites
             }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
@@ -156,6 +158,8 @@ impl Ppu {
             }
             _ => {}
         }
+
+        // todo: render sprites
     }
 
     #[rustfmt::skip]
@@ -241,6 +245,11 @@ impl Ppu {
         for x in 0..LCD_WIDTH {
             self.buffer[y * LCD_WIDTH + x] = render_line[x];
         }
+    }
+
+    /// Render all sprites in OAM at the current line.
+    fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8]) {
+
     }
 }
 
