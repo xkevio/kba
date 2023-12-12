@@ -7,6 +7,8 @@ use crate::{
     mmu::{irq::IF, Mcu},
 };
 
+use super::sprite::Sprite;
+
 const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
 const TOTAL_LINES: u8 = 227;
@@ -31,6 +33,7 @@ pub struct Ppu {
 
     #[derivative(Default(value = "[[None; 512]; 4]"))]
     current_line: [[Option<u16>; 512]; 4],
+    current_sprites: Vec<Sprite>,
 
     current_mode: Mode,
     cycle: u16,
@@ -46,14 +49,11 @@ enum Mode {
 
 impl Ppu {
     /// State machine that cycles through the modes and sets the right flags.
-    pub fn cycle(&mut self, vram: &[u8], palette_ram: &[u8], iff: &mut IF) {
+    pub fn cycle(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8], iff: &mut IF) {
         match self.current_mode {
             Mode::HDraw => {
                 if self.cycle > HDRAW_LEN {
-                    self.update_bg_scanline(vram, palette_ram);
-                    if self.dispcnt.bg_mode() < 3 {
-                        self.draw_bg_line();
-                    }
+                    self.scanline(vram, palette_ram, oam);
 
                     self.dispstat.set_hblank(true);
                     self.current_mode = Mode::HBlank;
@@ -118,7 +118,20 @@ impl Ppu {
         self.cycle += 1;
     }
 
-    // TODO: fn draw_frame(&self) to combine update&draw methods for bgs and sprites.
+    // TODO: to combine update&draw methods for bgs and sprites.
+    fn scanline(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8])  {
+        // Render backgrounds by either drawing text backgrounds or affine backgrounds.
+        // If mode >= 3, we render directly into `self.buffer` and don't use the line draw function.
+        self.update_bg_scanline(vram, palette_ram);
+        if self.dispcnt.bg_mode() < 3 {
+            self.draw_bg_line();
+        }
+
+        // Render sprites by first collecting all sprites from OAM
+        // that are on this line, then drawing them.
+        self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
+        self.render_sprite_line(vram, palette_ram);
+    }
 
     /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
     fn update_bg_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
@@ -158,8 +171,6 @@ impl Ppu {
             }
             _ => {}
         }
-
-        // todo: render sprites
     }
 
     #[rustfmt::skip]
@@ -248,8 +259,35 @@ impl Ppu {
     }
 
     /// Render all sprites in OAM at the current line.
-    fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8]) {
+    fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        // render into current_line[prio] and redo draw_line to happen after sprite render
+        /*
+            "Front" 
+            1. Sprite with priority 0 
+            2. BG with     priority 0 
+            3. Sprite with priority 1 
+            4. BG with     priority 1 
+            5. Sprite with priority 2 
+            6. BG with     priority 2 
+            7. Sprite with priority 3 
+            8. BG with     priority 3 
+            9. Backdrop 
+            "Back"
+         */
+        if !self.dispcnt.obj() {
+            return;
+        }
 
+        for sprite in &self.current_sprites {
+            if !sprite.rot_scale && !sprite.double_or_disable {
+                let tile_data_start = 0x10000 + sprite.tile_id as u32 * 32;
+                // get all tiles
+                // apply flip
+                // render into line
+            }
+
+            // todo: rot/scale later
+        }
     }
 }
 

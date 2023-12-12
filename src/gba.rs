@@ -33,6 +33,7 @@ impl Gba {
         self.cpu.bus.ppu.cycle(
             &*self.cpu.bus.vram,
             &self.cpu.bus.palette_ram,
+            &self.cpu.bus.oam,
             &mut self.cpu.bus.iff,
         );
         self.cycles += 1;

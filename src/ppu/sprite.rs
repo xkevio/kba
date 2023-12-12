@@ -38,6 +38,56 @@ pub enum ObjShape {
     Prohibited,
 }
 
+impl Sprite {
+    pub fn collect_obj_ly(oam: &[u8], ly: u8) -> Vec<Sprite> {
+        let mut sprites = Vec::new();
+
+        // 6 bytes for the three OBJ attributes, extra byte for rotation parameters.
+        for attributes in oam.chunks(8) {
+            let attr = u64::from_le_bytes(attributes.try_into().unwrap());
+            let sprite = Sprite::from(attr);
+
+            if (sprite.y..=(sprite.y + sprite.height())).contains(&ly) {
+                sprites.push(sprite);
+            }
+        }
+
+        sprites
+    }
+
+    pub fn width(&self) -> u8 {
+        use ObjShape::*;
+        match (self.size, &self.shape) {
+            (0, Square | Vertical) => 8,
+            (0, Horizontal) => 16,
+            (1, Square) => 16,
+            (1, Horizontal) => 32,
+            (1, Vertical) => 8,
+            (2, Square | Horizontal) => 32,
+            (2, Vertical) => 16,
+            (3, Square | Horizontal) => 64,
+            (3, Vertical) => 32,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn height(&self) -> u8 {
+        use ObjShape::*;
+        match (self.size, &self.shape) {
+            (0, Square | Horizontal) => 8,
+            (0, Vertical) => 16,
+            (1, Square) => 16,
+            (1, Horizontal) => 8,
+            (1, Vertical) => 32,
+            (2, Square | Vertical) => 32,
+            (2, Horizontal) => 16,
+            (3, Square | Vertical) => 64,
+            (3, Horizontal) => 32,
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl From<u64> for Sprite {
     fn from(value: u64) -> Self {
         let obj0 = value as u16;
