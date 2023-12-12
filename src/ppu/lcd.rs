@@ -119,18 +119,18 @@ impl Ppu {
     }
 
     // TODO: to combine update&draw methods for bgs and sprites.
-    fn scanline(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8])  {
+    fn scanline(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8]) {
         // Render backgrounds by either drawing text backgrounds or affine backgrounds.
         // If mode >= 3, we render directly into `self.buffer` and don't use the line draw function.
         self.update_bg_scanline(vram, palette_ram);
         if self.dispcnt.bg_mode() < 3 {
+            // Render sprites by first collecting all sprites from OAM
+            // that are on this line, then drawing them.
+            self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
+            self.render_sprite_line(vram, palette_ram);
             self.draw_bg_line();
         }
 
-        // Render sprites by first collecting all sprites from OAM
-        // that are on this line, then drawing them.
-        self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
-        self.render_sprite_line(vram, palette_ram);
     }
 
     /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
@@ -147,7 +147,6 @@ impl Ppu {
                         self.render_text_bg::<BG>(vram, palette_ram);
                     }
                 });
-
             }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
@@ -259,34 +258,65 @@ impl Ppu {
     }
 
     /// Render all sprites in OAM at the current line.
+    /// 
+    /// Sprite prio x > BG prio x for x in [0, 3]. 
     fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8]) {
-        // render into current_line[prio] and redo draw_line to happen after sprite render
-        /*
-            "Front" 
-            1. Sprite with priority 0 
-            2. BG with     priority 0 
-            3. Sprite with priority 1 
-            4. BG with     priority 1 
-            5. Sprite with priority 2 
-            6. BG with     priority 2 
-            7. Sprite with priority 3 
-            8. BG with     priority 3 
-            9. Backdrop 
-            "Back"
-         */
         if !self.dispcnt.obj() {
             return;
         }
 
         for sprite in &self.current_sprites {
             if !sprite.rot_scale && !sprite.double_or_disable {
-                let tile_data_start = 0x10000 + sprite.tile_id as u32 * 32;
-                // get all tiles
-                // apply flip
-                // render into line
+                let tile_amount = (sprite.width() / 8) + (sprite.height() / 8);
+                let mut tiles = Vec::new();
+
+                for i in 0..tile_amount {
+                    let tile_nums = sprite.tile_id as u32
+                        + if self.dispcnt.obj_char_vram_map() {
+                            i as u32 * (sprite.bpp as u32 * 2)
+                        } else {
+                            (tiles.len() as u32 / (sprite.width() as u32 / 8) * 0x20)
+                                + (i as u32 * (sprite.bpp as u32 * 2))
+                        };
+
+                    tiles.push(tile_nums);
+                }
+
+                let tiles_on_line = if sprite.y.abs_diff(self.vcount.ly()) < 8 {
+                    &tiles[..(sprite.width() as usize / 8)]
+                } else {
+                    &tiles[(sprite.width() as usize / 8)..]
+                };
+
+                // FIXME: tile_addr overflow, probably faulty tile_id
+                for tile_id in tiles_on_line {
+                    let tile_addr = 0x10000 + tile_id * 32 + (self.vcount.ly() as u32 % 8) * 8;
+                    // TODO: flipping
+
+                    for x in 0..8 {
+                        let (px_idx, px) = if !sprite.bpp {
+                            let px_idx = (vram[tile_addr as usize + x] >> ((x & 1) * 4)) & 0xF;
+                            (px_idx, u16::from_be_bytes([
+                                palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
+                                palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
+                            ]))
+                        } else {
+                            let px_idx = vram[tile_addr as usize + x];
+    
+                            (px_idx, u16::from_be_bytes([
+                                palette_ram[px_idx as usize * 2 + 1],
+                                palette_ram[px_idx as usize * 2],
+                            ]))
+                        };
+
+                        if px_idx != 0 {
+                            self.current_line[sprite.prio as usize][(sprite.x as usize + x) % 512] = Some(px);
+                        }
+                    }
+                }
             }
 
-            // todo: rot/scale later
+            // TODO: rot/scale later
         }
     }
 }
