@@ -273,13 +273,14 @@ impl Ppu {
                 for i in 0..tile_amount {
                     let tile_nums = sprite.tile_id as u32
                         + if self.dispcnt.obj_char_vram_map() {
-                            i as u32 * (sprite.bpp as u32 * 2)
+                            i as u32 * (sprite.bpp as u32 + 1)
                         } else {
+                            let i = i % (sprite.width() / 8);
                             (tiles.len() as u32 / (sprite.width() as u32 / 8) * 0x20)
-                                + (i as u32 * (sprite.bpp as u32 * 2))
+                                + (i as u32 * (sprite.bpp as u32 + 1))
                         };
 
-                    tiles.push(tile_nums);
+                    tiles.push(tile_nums % 1024);
                 }
 
                 let tiles_on_line = if sprite.y.abs_diff(self.vcount.ly()) < 8 {
@@ -288,7 +289,7 @@ impl Ppu {
                     &tiles[(sprite.width() as usize / 8)..]
                 };
 
-                // FIXME: tile_addr overflow, probably faulty tile_id
+                // FIXME: tile_addr overflow, probably faulty tile_id (% 1024)?
                 for tile_id in tiles_on_line {
                     let tile_addr = 0x10000 + tile_id * 32 + (self.vcount.ly() as u32 % 8) * 8;
                     // TODO: flipping
