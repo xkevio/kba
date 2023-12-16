@@ -47,7 +47,7 @@ impl Sprite {
             let attr = u64::from_le_bytes(attributes.try_into().unwrap());
             let sprite = Sprite::from(attr);
 
-            if (sprite.y..=(sprite.y + sprite.height())).contains(&ly) {
+            if (sprite.y..(sprite.y + sprite.height())).contains(&ly) {
                 sprites.push(sprite);
             }
         }

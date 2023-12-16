@@ -267,7 +267,7 @@ impl Ppu {
 
         for sprite in &self.current_sprites {
             if !sprite.rot_scale && !sprite.double_or_disable {
-                let tile_amount = (sprite.width() / 8) + (sprite.height() / 8);
+                let tile_amount = (sprite.width() / 8) * (sprite.height() / 8);
                 let mut tiles = Vec::new();
 
                 for i in 0..tile_amount {
@@ -282,36 +282,38 @@ impl Ppu {
 
                     tiles.push(tile_nums % 1024);
                 }
+                
+                let y_diff = sprite.y.abs_diff(self.vcount.ly()) as usize;
+                let y_start = (y_diff / 8) * (sprite.width() as usize / 8);
+                let tiles_on_line = &tiles[y_start..(y_start + (sprite.width() as usize / 8))];
 
-                let tiles_on_line = if sprite.y.abs_diff(self.vcount.ly()) < 8 {
-                    &tiles[..(sprite.width() as usize / 8)]
-                } else {
-                    &tiles[(sprite.width() as usize / 8)..]
-                };
-
-                // FIXME: tile_addr overflow, probably faulty tile_id (% 1024)?
-                for tile_id in tiles_on_line {
-                    let tile_addr = 0x10000 + tile_id * 32 + (self.vcount.ly() as u32 % 8) * 8;
-                    // TODO: flipping
+                // TODO: v-flip
+                for (x_idx, tile_id) in tiles_on_line.iter().enumerate() {
+                    let tile_addr = 0x10000 + tile_id * 32;
+                    let x_off = if sprite.h_flip { (tiles_on_line.len() - x_idx - 1) * 8 } else { x_idx * 8 };
 
                     for x in 0..8 {
+                        let screen_x = (sprite.x as usize + x + x_off) % 512;
+                        let tile_off = (y_diff % 8) * 8 as usize + if sprite.h_flip { 7 - x } else { x };
+
                         let (px_idx, px) = if !sprite.bpp {
-                            let px_idx = (vram[tile_addr as usize + x] >> ((x & 1) * 4)) & 0xF;
+                            let px_idx = (vram[tile_addr as usize + tile_off / 2] >> ((tile_off & 1) * 4)) & 0xF;
                             (px_idx, u16::from_be_bytes([
                                 palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
                                 palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
                             ]))
                         } else {
+                            println!("TODO!");
                             let px_idx = vram[tile_addr as usize + x];
     
                             (px_idx, u16::from_be_bytes([
-                                palette_ram[px_idx as usize * 2 + 1],
-                                palette_ram[px_idx as usize * 2],
+                                palette_ram[0x200 + px_idx as usize * 2 + 1],
+                                palette_ram[0x200 + px_idx as usize * 2],
                             ]))
                         };
 
                         if px_idx != 0 {
-                            self.current_line[sprite.prio as usize][(sprite.x as usize + x) % 512] = Some(px);
+                            self.current_line[sprite.prio as usize][screen_x] = Some(px);
                         }
                     }
                 }
