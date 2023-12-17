@@ -59,9 +59,8 @@ fn main() -> SdlResult<()> {
     // Actual loop that runs the program and the emulator.
     'main: loop {
         for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => break 'main,
-                _ => {}
+            if let Event::Quit { .. } = event {
+                break 'main
             }
         }
 

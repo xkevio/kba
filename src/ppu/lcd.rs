@@ -31,8 +31,14 @@ pub struct Ppu {
     #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: Vec<Option<u16>>,
 
+    /// Current to-be-drawn line from the backgrounds, one for each prio.
     #[derivative(Default(value = "[[None; 512]; 4]"))]
-    current_line: [[Option<u16>; 512]; 4],
+    current_bg_line: [[Option<u16>; 512]; 4],
+    /// Current to-be-drawn line for sprites, one for each prio.
+    #[derivative(Default(value = "[[None; 512]; 4]"))]
+    current_sprite_line: [[Option<u16>; 512]; 4],
+
+    /// Up to 128 sprites from OAM for the current LY.
     current_sprites: Vec<Sprite>,
 
     current_mode: Mode,
@@ -130,7 +136,6 @@ impl Ppu {
             self.render_sprite_line(vram, palette_ram);
             self.draw_bg_line();
         }
-
     }
 
     /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
@@ -138,7 +143,7 @@ impl Ppu {
         // Render backgrounds.
         match self.dispcnt.bg_mode() {
             0 => {
-                self.current_line = [[None; 512]; 4];
+                self.current_bg_line = [[None; 512]; 4];
 
                 // Render backgrounds by iterating and
                 // checking which are enabled via seq-macro.
@@ -229,11 +234,12 @@ impl Ppu {
             };
 
             if px_idx != 0 {
-                self.current_line[BG][x] = Some(px);
+                self.current_bg_line[BG][x] = Some(px);
             }
         }
     }
 
+    // TODO: rename functions
     /// Draw the scanline by placing it into the buffer. (For mode 0, 1, 2).
     fn draw_bg_line(&mut self) {
         let y = self.vcount.ly() as usize;
@@ -244,12 +250,18 @@ impl Ppu {
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
 
         let mut render_line = vec![None; 512];
-        for bg in bg_sorted.iter().filter(|&&x| is_bg_enabled & (1 << x) != 0) {
-            render_line = render_line
-                .iter()
-                .zip(self.current_line[*bg])
-                .map(|(a, b)| a.or(b))
-                .collect();
+
+        // Draw all enabled background layers correctly sorted by priority.
+        // Draw all the sprite layers on top of the backgrounds.
+        for prio in bg_sorted {
+            for x in 0..512 {
+                let bg = (is_bg_enabled & (1 << prio) != 0)
+                    .then_some(self.current_bg_line[prio][x])
+                    .flatten();
+                let sp = self.current_sprite_line[prio][x];
+
+                render_line[x] = render_line[x].or(sp.or(bg));
+            }
         }
 
         for x in 0..LCD_WIDTH {
@@ -258,14 +270,16 @@ impl Ppu {
     }
 
     /// Render all sprites in OAM at the current line.
-    /// 
-    /// Sprite prio x > BG prio x for x in [0, 3]. 
+    ///
+    /// Sprite prio x > BG prio x for x in [0, 3].
+    #[rustfmt::skip]
     fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8]) {
         if !self.dispcnt.obj() {
             return;
         }
 
-        for sprite in &self.current_sprites {
+        self.current_sprite_line = [[None; 512]; 4];
+        for sprite in self.current_sprites.iter().rev() {
             if !sprite.rot_scale && !sprite.double_or_disable {
                 let tile_amount = (sprite.width() / 8) * (sprite.height() / 8);
                 let mut tiles = Vec::new();
@@ -282,19 +296,21 @@ impl Ppu {
 
                     tiles.push(tile_nums % 1024);
                 }
-                
+
                 let y_diff = sprite.y.abs_diff(self.vcount.ly()) as usize;
-                let y_start = (y_diff / 8) * (sprite.width() as usize / 8);
+                let y_start = match sprite.v_flip {
+                    true => (sprite.height() as usize / 8) - (y_diff / 8) - 1,
+                    false => y_diff / 8,
+                } * (sprite.width() as usize / 8);
                 let tiles_on_line = &tiles[y_start..(y_start + (sprite.width() as usize / 8))];
 
-                // TODO: v-flip
                 for (x_idx, tile_id) in tiles_on_line.iter().enumerate() {
                     let tile_addr = 0x10000 + tile_id * 32;
                     let x_off = if sprite.h_flip { (tiles_on_line.len() - x_idx - 1) * 8 } else { x_idx * 8 };
 
                     for x in 0..8 {
                         let screen_x = (sprite.x as usize + x + x_off) % 512;
-                        let tile_off = (y_diff % 8) * 8 as usize + if sprite.h_flip { 7 - x } else { x };
+                        let tile_off = if sprite.v_flip { 7 - (y_diff % 8) } else { y_diff % 8 } * 8 + if sprite.h_flip { 7 - x } else { x };
 
                         let (px_idx, px) = if !sprite.bpp {
                             let px_idx = (vram[tile_addr as usize + tile_off / 2] >> ((tile_off & 1) * 4)) & 0xF;
@@ -303,9 +319,7 @@ impl Ppu {
                                 palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
                             ]))
                         } else {
-                            println!("TODO!");
-                            let px_idx = vram[tile_addr as usize + x];
-    
+                            let px_idx = vram[tile_addr as usize + tile_off];
                             (px_idx, u16::from_be_bytes([
                                 palette_ram[0x200 + px_idx as usize * 2 + 1],
                                 palette_ram[0x200 + px_idx as usize * 2],
@@ -313,7 +327,7 @@ impl Ppu {
                         };
 
                         if px_idx != 0 {
-                            self.current_line[sprite.prio as usize][screen_x] = Some(px);
+                            self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
                         }
                     }
                 }
