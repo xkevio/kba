@@ -90,7 +90,7 @@ fn main() -> SdlResult<()> {
                 .enumerate()
             {
                 let [r, g, b, a] = match px {
-                    Some(color) => rgb555_to_color(*color).to_be_bytes(),
+                    Some(color) => ppu::rgb555_to_color(*color).to_be_bytes(),
                     None => [0, 0, 0, 255],
                 };
 
@@ -110,17 +110,4 @@ fn main() -> SdlResult<()> {
     }
 
     Ok(())
-}
-
-fn rgb555_to_color(rgb: u16) -> u32 {
-    let red = (rgb & 0x1F) as u8;
-    let green = ((rgb >> 5) & 0x1F) as u8;
-    let blue = ((rgb >> 10) & 0x1F) as u8;
-
-    u32::from_be_bytes([
-        (red << 3) | (red >> 2),
-        (green << 3) | (green >> 2),
-        (blue << 3) | (blue >> 2),
-        255,
-    ])
 }

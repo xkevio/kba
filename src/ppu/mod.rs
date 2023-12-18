@@ -40,3 +40,17 @@ pub fn modify_brightness<const MODE: bool>(target_px_a: u16, evy: u8) -> u16 {
 
     b << 10 | g << 5 | r
 }
+
+/// Convert RGB555 color values to full 32 bit pixels.
+pub fn rgb555_to_color(rgb: u16) -> u32 {
+    let red = (rgb & 0x1F) as u8;
+    let green = ((rgb >> 5) & 0x1F) as u8;
+    let blue = ((rgb >> 10) & 0x1F) as u8;
+
+    u32::from_be_bytes([
+        (red << 3) | (red >> 2),
+        (green << 3) | (green >> 2),
+        (blue << 3) | (blue >> 2),
+        255,
+    ])
+}
