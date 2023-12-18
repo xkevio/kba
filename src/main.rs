@@ -70,7 +70,12 @@ fn main() -> SdlResult<()> {
             left => Left,
             down => Down,
             right => Right,
-            start => Return
+            start => Return,
+            select => Backspace,
+            a => X,
+            b => Y,
+            l => A,
+            r => S
         );
 
         // For now, update every 266_666 cycles (60 frames).

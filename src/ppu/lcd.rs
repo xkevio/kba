@@ -309,7 +309,7 @@ impl Ppu {
                     tiles.push(tile_nums % 1024);
                 }
 
-                let y_diff = sprite.y.abs_diff(self.vcount.ly()) as usize;
+                let y_diff = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16) as usize & 0xFF;
                 let y_start = match sprite.v_flip {
                     true => (sprite.height() as usize / 8) - (y_diff / 8) - 1,
                     false => y_diff / 8,

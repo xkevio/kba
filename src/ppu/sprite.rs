@@ -47,7 +47,24 @@ impl Sprite {
             let attr = u64::from_le_bytes(attributes.try_into().unwrap());
             let sprite = Sprite::from(attr);
 
-            if (sprite.y..(sprite.y + sprite.height())).contains(&ly) {
+            // Treat y as signed with [-127, 128].
+            // Won't fully work for affine double sprite size.
+            let mut signed_start = sprite.y as i8;
+            let signed_end = (signed_start as i16 + sprite.height() as i16) as i8;
+            let wrapped_ly = ly as i8 as i16;
+
+            // TODO: simplify wrapped range check!
+            let contain = loop {
+                if signed_start == signed_end {
+                    break false;
+                } else if signed_start as i16 == wrapped_ly {
+                    break true;
+                } else {
+                    signed_start += 1;
+                }
+            };
+
+            if contain {
                 sprites.push(sprite);
             }
         }
