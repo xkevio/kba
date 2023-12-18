@@ -1,5 +1,5 @@
 use derivative::Derivative;
-use proc_bitfield::{bitfield, BitRange};
+use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
@@ -28,6 +28,10 @@ pub struct Ppu {
     pub bgxhofs: [u16; 4],
     pub bgxvofs: [u16; 4],
 
+    pub bldcnt: BLDCNT,
+    pub bldalpha: BLDALPHA,
+    pub bldy: BLDY,
+
     #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: Vec<Option<u16>>,
 
@@ -46,11 +50,19 @@ pub struct Ppu {
 }
 
 #[derive(Default)]
-enum Mode {
+pub(super) enum Mode {
     #[default]
     HDraw,
     HBlank,
     VBlank,
+}
+
+#[derive(ConvRaw)]
+pub enum ColorEffect {
+    None,
+    AlphaBlending,
+    BrightnessIncrease,
+    BrightnessDecrease,
 }
 
 impl Ppu {
@@ -356,6 +368,8 @@ impl Mcu for Ppu {
             0x000D => (self.bgxcnt[2].bg_control() >> 8) as u8,
             0x000E => self.bgxcnt[3].bg_control() as u8,
             0x000F => (self.bgxcnt[3].bg_control() >> 8) as u8,
+            0x0050 => self.bldcnt.bldcnt() as u8,
+            0x0051 => (self.bldcnt.bldcnt() >> 8) as u8,
             _ => 0,
         }
     }
@@ -391,6 +405,11 @@ impl Mcu for Ppu {
             0x001D => self.bgxhofs[3] = (self.bgxhofs[3] & 0xFF) | ((value as u16) << 8),
             0x001E => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF00) | value as u16,
             0x001F => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF) | ((value as u16) << 8),
+            0x0050 => self.bldcnt.set_bldcnt((self.bldcnt.0 & 0xFF00) | value as u16),
+            0x0051 => self.bldcnt.set_bldcnt((value as u16) << 8 | (self.bldcnt.0 & 0xFF)),
+            0x0052 => self.bldalpha.set_bldalpha((self.bldalpha.0 & 0xFF00) | value as u16),
+            0x0053 => self.bldalpha.set_bldalpha((value as u16) << 8 | (self.bldalpha.0 & 0xFF)),
+            0x0054 => self.bldy.set_evy(value & 0x1F),
             _ => {}
         }
     }
@@ -453,5 +472,45 @@ bitfield! {
         pub screen_base_block: u8 @ 8..=12,
         pub disp_area_overflow: bool @ 13,
         pub screen_size: u8 @ 14..=15,
+    }
+}
+
+bitfield! {
+    /// **BLDCNT - Color Special Effects Selection** (r/w).
+    #[derive(Clone, Copy, Default)]
+    pub struct BLDCNT(pub u16) {
+        pub bldcnt: u16 @ ..,
+        pub bg0_first_px: bool @ 0,
+        pub bg1_first_px: bool @ 1,
+        pub bg2_first_px: bool @ 2,
+        pub bg3_first_px: bool @ 3,
+        pub obj_first_px: bool @ 4,
+        pub bd_first_px: bool @ 5,
+        pub color_effect: u8 [try ColorEffect] @ 6..=7,
+        pub bg0_second_px: bool @ 8,
+        pub bg1_second_px: bool @ 9,
+        pub bg2_second_px: bool @ 10,
+        pub bg3_second_px: bool @ 11,
+        pub obj_second_px: bool @ 12,
+        pub bd_second_px: bool @ 13,
+    }
+}
+
+bitfield! {
+    /// **BLDALPHA - Alpha Blending Coefficients** (w).
+    #[derive(Clone, Copy, Default)]
+    pub struct BLDALPHA(pub u16) {
+        pub bldalpha: u16 @ ..,
+        pub eva: u8 @ 0..=4,
+        pub evb: u8 @ 8..=12,
+    }
+}
+
+bitfield! {
+    /// **BLDY - Brightness Coefficients** (w).
+    #[derive(Clone, Copy, Default)]
+    pub struct BLDY(pub u16) {
+        pub bldy: u16 @ ..,
+        pub evy: u8 @ 0..=4,
     }
 }
