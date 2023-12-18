@@ -3,7 +3,8 @@ use proc_bitfield::bitfield;
 use super::{
     game_pak::GamePak,
     irq::{IE, IF, IME},
-    Mcu, timer::Timers,
+    timer::Timers,
+    Mcu,
 };
 
 use crate::{box_arr, ppu::lcd::Ppu};

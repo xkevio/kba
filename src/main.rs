@@ -60,7 +60,7 @@ fn main() -> SdlResult<()> {
     'main: loop {
         for event in event_pump.poll_iter() {
             if let Event::Quit { .. } = event {
-                break 'main
+                break 'main;
             }
         }
 

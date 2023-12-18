@@ -2,7 +2,7 @@ pub mod lcd;
 pub mod sprite;
 
 /// Special Color Effect: Alpha Blending.
-/// 
+///
 /// `I = eva * target_px_a + evb * target_px_b`.
 pub fn blend(target_px_a: u16, target_px_b: u16, eva: u8, evb: u8) -> u16 {
     let eva_coeff = eva.clamp(0, 16);
@@ -24,7 +24,7 @@ pub fn blend(target_px_a: u16, target_px_b: u16, eva: u8, evb: u8) -> u16 {
 }
 
 /// Special Color Effect: Increase/Decrease Brightness.
-/// 
+///
 /// `MODE = true` -> Increase, else Decrease.
 pub fn modify_brightness<const MODE: bool>(target_px_a: u16, evy: u8) -> u16 {
     let evy_coeff = evy.clamp(0, 16) as u16;
@@ -33,11 +33,9 @@ pub fn modify_brightness<const MODE: bool>(target_px_a: u16, evy: u8) -> u16 {
     let g_a = (target_px_a >> 5) & 0x1F;
     let b_a = (target_px_a >> 10) & 0x1F;
 
-    let [r, g, b] = [r_a, g_a, b_a].map(|c| {
-        match MODE {
-            true => c + (31 - c) * evy_coeff,
-            false => c - (c * evy_coeff),
-        }
+    let [r, g, b] = [r_a, g_a, b_a].map(|c| match MODE {
+        true => c + (31 - c) * evy_coeff,
+        false => c - (c * evy_coeff),
     });
 
     b << 10 | g << 5 | r
