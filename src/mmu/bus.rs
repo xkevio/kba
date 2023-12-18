@@ -3,7 +3,7 @@ use proc_bitfield::bitfield;
 use super::{
     game_pak::GamePak,
     irq::{IE, IF, IME},
-    Mcu,
+    Mcu, timer::Timers,
 };
 
 use crate::{box_arr, ppu::lcd::Ppu};
@@ -22,6 +22,9 @@ pub struct Bus {
     pub ie: IE,
     /// Interrupt Flag Request Register.
     pub iff: IF,
+
+    /// Four incrementing 16-bit timers.
+    pub timers: Timers,
 
     /// On-board and On-chip Work RAM.
     pub wram: Box<[u8; 0x48000]>,
@@ -47,6 +50,8 @@ impl Default for Bus {
             ime: IME(0),
             ie: IE(0),
             iff: IF(0),
+
+            timers: Timers::default(),
 
             wram: box_arr![0x00; 0x48000],
             palette_ram: [0x00; 0x400],

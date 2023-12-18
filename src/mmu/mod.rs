@@ -1,6 +1,7 @@
 pub mod bus;
 pub mod game_pak;
 pub mod irq;
+pub mod timer;
 
 /// Create array on the heap, ideally without blowing the stack first.
 #[macro_export]
