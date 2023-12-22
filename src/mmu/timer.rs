@@ -89,15 +89,10 @@ pub struct Timer {
 impl Timer {
     /// Update all the bits from the TMxCNT_H register.
     fn update(&mut self, value: u16) {
-        let freq = value & 0x3;
-        let count_up = value & (1 << 2) != 0;
-        let irq = value & (1 << 6) != 0;
-        let start_stop = value & (1 << 7) != 0;
-
-        self.freq = Freq::try_from(freq).unwrap();
-        self.count_up = count_up;
-        self.irq = irq;
-        self.start_stop = start_stop;
+        self.start_stop = value & (1 << 7) != 0;
+        self.irq = value & (1 << 6) != 0;
+        self.count_up = value & (1 << 2) != 0;
+        self.freq = Freq::try_from(value & 0x3).unwrap();
     }
 
     fn tick(&mut self, _id: usize, _iff: &mut IF) {
