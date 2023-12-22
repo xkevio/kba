@@ -10,43 +10,53 @@ pub struct Timers([Timer; 4]);
 impl Timers {
     pub fn tick(&mut self, iff: &mut IF) {
         for id in 0..4 {
-            // self[id].tick()...
+            // TODO: Implement tick.
+            self[id].tick(id, iff);
         }
     }
 }
 
 impl Mcu for Timers {
-    fn read8(&mut self, address: u32) -> u8 {
+    fn read16(&mut self, address: u32) -> u16 {
         match address {
-            // Read counter and control for timer 0.
-            0x0100 => self[0].counter as u8,
-            0x0101 => (self[0].counter >> 8) as u8,
-            0x0102 => u16::from(self[0]) as u8,
-            0x0103 => (u16::from(self[0]) >> 8) as u8,
+            0x0100 => self[0].counter,
+            0x0102 => u16::from(self[0]),
+            0x0104 => self[1].counter,
+            0x0106 => u16::from(self[1]),
+            0x0108 => self[2].counter,
+            0x010A => u16::from(self[2]),
+            0x010C => self[3].counter,
+            0x010F => u16::from(self[3]),
+            _ => unreachable!()
+        }
+    }
 
-            // Read counter and control for timer 1.
-            0x0104 => self[1].counter as u8,
-            0x0105 => (self[1].counter >> 8) as u8,
-            0x0106 => u16::from(self[1]) as u8,
-            0x0107 => (u16::from(self[1]) >> 8) as u8,
+    fn read8(&mut self, address: u32) -> u8 {
+        match address % 2 == 0 {
+            true => self.read16(address) as u8,
+            false => (self.read16(address - 1) >> 8) as u8,
+        }
+    }
 
-            // Read counter and control for timer 2.
-            0x0108 => self[2].counter as u8,
-            0x0109 => (self[2].counter >> 8) as u8,
-            0x010A => u16::from(self[2]) as u8,
-            0x010B => (u16::from(self[2]) >> 8) as u8,
-
-            // Read counter and control for timer 3.
-            0x010C => self[3].counter as u8,
-            0x010D => (self[3].counter >> 8) as u8,
-            0x010E => u16::from(self[3]) as u8,
-            0x010F => (u16::from(self[3]) >> 8) as u8,
-            _ => unreachable!(),
+    fn write16(&mut self, address: u32, value: u16) {
+        match address {
+            0x0100 => self[0].reload = value,
+            0x0102 => self[0].update(value),
+            0x0104 => self[1].reload = value,
+            0x0106 => self[1].update(value),
+            0x0108 => self[2].reload = value,
+            0x010A => self[2].update(value),
+            0x010C => self[3].reload = value,
+            0x010F => self[3].update(value),
+            _ => unreachable!()
         }
     }
 
     fn write8(&mut self, address: u32, value: u8) {
-        todo!()
+        match address % 2 == 0 {
+            true => self.write16(address, value as u16),
+            false => self.write16(address, (value as u16) << 8),
+        }
     }
 }
 
@@ -74,6 +84,25 @@ pub struct Timer {
     count_up: bool,
     irq: bool,
     start_stop: bool,
+}
+
+impl Timer {
+    /// Update all the bits from the TMxCNT_H register.
+    fn update(&mut self, value: u16) {
+        let freq = value & 0x3;
+        let count_up = value & (1 << 2) != 0;
+        let irq = value & (1 << 6) != 0;
+        let start_stop = value & (1 << 7) != 0;
+
+        self.freq = Freq::try_from(freq).unwrap();
+        self.count_up = count_up;
+        self.irq = irq;
+        self.start_stop = start_stop;
+    }
+
+    fn tick(&mut self, _id: usize, _iff: &mut IF) {
+        todo!()
+    }
 }
 
 impl From<Timer> for u16 {

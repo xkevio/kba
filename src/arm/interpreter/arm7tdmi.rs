@@ -135,11 +135,9 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        // if self.regs[15] >= 0x0300_0000 { println!("{:08X}", self.regs[15]) };
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
-                // println!("{:X}", opcode);
 
                 let cond = (opcode >> 28) & 0xF;
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
