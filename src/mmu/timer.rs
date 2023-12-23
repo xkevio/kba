@@ -2,6 +2,7 @@ use std::ops::{Index, IndexMut};
 
 use super::{irq::IF, Mcu};
 use proc_bitfield::ConvRaw;
+use seq_macro::seq;
 
 /// Tuple struct to hold the four timers and manage read/writes.
 #[derive(Default)]
@@ -11,11 +12,33 @@ impl Timers {
     /// Tick all 4 timers based on their attributes and frequencies.
     ///
     /// Keep track of IDs for overflowing IRQ.
-    pub fn tick(&mut self, iff: &mut IF) {
-        for id in 0..4 {
-            // TODO: Implement tick.
-            self[id].tick(id, iff);
-        }
+    pub fn tick(&mut self, iff: &mut IF, cycles: usize) {
+        let mut tm_overflow = [false; 4];
+
+        seq!(ID in 0..4 {
+            if !self[ID].start {
+                return;
+            }
+
+            let freq = match self[ID].freq {
+                Freq::F1 => 1,
+                Freq::F64 => 64,
+                Freq::F256 => 256,
+                Freq::F1024 => 1024,
+            };
+
+            tm_overflow[ID] = if !self[ID].count_up && cycles % freq == 0 {
+                self[ID].tick()
+            } else if ID > 0 && tm_overflow[ID - 1] && self[ID].count_up {
+                self[ID].tick()
+            } else {
+                false
+            };
+
+            if tm_overflow[ID] {
+                iff.set_timer~ID(true);
+            }
+        });
     }
 }
 
@@ -57,11 +80,9 @@ impl Mcu for Timers {
 
     fn write8(&mut self, address: u32, value: u8) {
         // Make sure to "read" reload to modify it on write and not "read" counter.
-        let [lo, hi] = if (address & !1) % 4 == 0 {
-            let t_idx = ((address & !1) - 0x0100) / 4;
-            self[t_idx as usize].reload
-        } else {
-            self.read16(address & !1)
+        let [lo, hi] = match (address & !1) % 4 {
+            0 => self[((address as usize & !1) - 0x0100) / 4].reload,
+            _ => self.read16(address & !1),
         }
         .to_le_bytes();
 
@@ -95,27 +116,36 @@ pub struct Timer {
     freq: Freq,
     count_up: bool,
     irq: bool,
-    start_stop: bool,
+    start: bool,
 }
 
 impl Timer {
     /// Update all the bits from the TMxCNT_H register.
     fn update(&mut self, value: u16) {
-        self.start_stop = value & (1 << 7) != 0;
+        self.start = value & (1 << 7) != 0;
         self.irq = value & (1 << 6) != 0;
         self.count_up = value & (1 << 2) != 0;
         self.freq = Freq::try_from(value & 0x3).unwrap();
     }
 
-    fn tick(&mut self, _id: usize, _iff: &mut IF) {
-        todo!()
+    /// Tick timer by one; if overflow -> load `reload`, else just increase.
+    /// Returns if timer has overflowed.
+    fn tick(&mut self) -> bool {
+        let (c, ov) = self.counter.overflowing_add(1);
+
+        self.counter = match ov {
+            true => self.reload,
+            false => c,
+        };
+
+        return ov;
     }
 }
 
 impl From<Timer> for u16 {
     fn from(value: Timer) -> Self {
         0xFF00
-            | (value.start_stop as u16) << 7
+            | (value.start as u16) << 7
             | (value.irq as u16) << 6
             | (value.count_up as u16) << 2
             | value.freq as u16

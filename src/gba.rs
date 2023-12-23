@@ -29,13 +29,7 @@ impl Gba {
             self.cpu.cycle();
         }
 
-        // Later refactor into bus cycle() method.
-        self.cpu.bus.ppu.cycle(
-            &*self.cpu.bus.vram,
-            &self.cpu.bus.palette_ram,
-            &self.cpu.bus.oam,
-            &mut self.cpu.bus.iff,
-        );
+        self.cpu.bus.tick(self.cycles);
         self.cycles += 1;
     }
 }
