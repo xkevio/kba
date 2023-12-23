@@ -29,7 +29,7 @@ impl Mcu for Timers {
             0x0108 => self[2].counter,
             0x010A => u16::from(self[2]),
             0x010C => self[3].counter,
-            0x010F => u16::from(self[3]),
+            0x010E => u16::from(self[3]),
             _ => 0,
         }
     }
@@ -50,7 +50,7 @@ impl Mcu for Timers {
             0x0108 => self[2].reload = value,
             0x010A => self[2].update(value),
             0x010C => self[3].reload = value,
-            0x010F => self[3].update(value),
+            0x010E => self[3].update(value),
             _ => unreachable!(),
         }
     }

@@ -403,6 +403,8 @@ impl Mcu for Ppu {
         }
     }
 
+    /// Used in `write8` to get the internal value before modifying it.
+    /// Also "reads" non-readable values but isn't used for bus access.
     fn raw_read16(&mut self, _address: u32) -> u16 {
         match _address {
             0x0000..=0x000F => self.read16(_address),
