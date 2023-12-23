@@ -42,4 +42,10 @@ pub trait Mcu {
 
     fn read8(&mut self, address: u32) -> u8;
     fn write8(&mut self, address: u32, value: u8);
+
+    /// Raw read - meaning no effect on the bus and will also
+    /// read non-readable values, just for convenience (I/O).
+    fn raw_read16(&mut self, _address: u32) -> u16 {
+        unimplemented!()
+    }
 }

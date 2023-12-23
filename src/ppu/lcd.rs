@@ -350,67 +350,74 @@ impl Ppu {
     }
 }
 
-// TODO: u16 r/w for IO
 impl Mcu for Ppu {
-    #[rustfmt::skip]
-    fn read8(&mut self, address: u32) -> u8 {
+    fn read16(&mut self, address: u32) -> u16 {
         match address {
-            0x0000 => self.dispcnt.dispcnt() as u8,
-            0x0001 => (self.dispcnt.dispcnt() >> 8) as u8,
-            0x0004 => self.dispstat.dispstat() as u8,
-            0x0005 => (self.dispstat.dispstat() >> 8) as u8,
-            0x0006 => self.vcount.ly(),
-            0x0008 => self.bgxcnt[0].bg_control() as u8,
-            0x0009 => (self.bgxcnt[0].bg_control() >> 8) as u8,
-            0x000A => self.bgxcnt[1].bg_control() as u8,
-            0x000B => (self.bgxcnt[1].bg_control() >> 8) as u8,
-            0x000C => self.bgxcnt[2].bg_control() as u8,
-            0x000D => (self.bgxcnt[2].bg_control() >> 8) as u8,
-            0x000E => self.bgxcnt[3].bg_control() as u8,
-            0x000F => (self.bgxcnt[3].bg_control() >> 8) as u8,
-            0x0050 => self.bldcnt.bldcnt() as u8,
-            0x0051 => (self.bldcnt.bldcnt() >> 8) as u8,
+            0x0000 => self.dispcnt.dispcnt(),
+            0x0004 => self.dispstat.dispstat(),
+            0x0006 => self.vcount.vcount(),
+            0x0008 => self.bgxcnt[0].bg_control(),
+            0x000A => self.bgxcnt[1].bg_control(),
+            0x000C => self.bgxcnt[2].bg_control(),
+            0x000E => self.bgxcnt[3].bg_control(),
+            0x0050 => self.bldcnt.bldcnt(),
             _ => 0,
         }
     }
 
-    #[rustfmt::skip]
-    fn write8(&mut self, address: u32, value: u8) {
+    fn read8(&mut self, address: u32) -> u8 {
+        match address & 1 == 0 {
+            true => self.read16(address) as u8,
+            false => (self.read16(address & !1) >> 8) as u8,
+        }
+    }
+
+    fn write16(&mut self, address: u32, value: u16) {
         match address {
-            0x0000 => self.dispcnt.set_dispcnt((self.dispcnt.0 & 0xFF00) | value as u16),
-            0x0001 => self.dispcnt.set_dispcnt(((value as u16) << 8) | (self.dispcnt.0 & 0xFF)),
-            0x0004 => self.dispstat.set_dispstat((self.dispstat.0 & 0xFF00) | (value & 0xF8) as u16),
-            0x0005 => self.dispstat.set_dispstat(((value as u16) << 8) | (self.dispstat.0 & 0xFF)),
-            0x0008 => self.bgxcnt[0].set_bg_control((self.bgxcnt[0].0 & 0xFF00) | value as u16),
-            0x0009 => self.bgxcnt[0].set_bg_control((value as u16) << 8 | (self.bgxcnt[0].0 & 0xFF)),
-            0x000A => self.bgxcnt[1].set_bg_control((self.bgxcnt[1].0 & 0xFF00) | value as u16),
-            0x000B => self.bgxcnt[1].set_bg_control((value as u16) << 8 | (self.bgxcnt[1].0 & 0xFF)),
-            0x000C => self.bgxcnt[2].set_bg_control((self.bgxcnt[2].0 & 0xFF00) | value as u16),
-            0x000D => self.bgxcnt[2].set_bg_control((value as u16) << 8 | (self.bgxcnt[2].0 & 0xFF)),
-            0x000E => self.bgxcnt[3].set_bg_control((self.bgxcnt[3].0 & 0xFF00) | value as u16),
-            0x000F => self.bgxcnt[3].set_bg_control((value as u16) << 8 | (self.bgxcnt[3].0 & 0xFF)),
-            0x0010 => self.bgxhofs[0] = (self.bgxhofs[0] & 0xFF00) | value as u16,
-            0x0011 => self.bgxhofs[0] = (self.bgxhofs[0] & 0xFF) | ((value as u16) << 8),
-            0x0012 => self.bgxvofs[0] = (self.bgxvofs[0] & 0xFF00) | value as u16,
-            0x0013 => self.bgxvofs[0] = (self.bgxvofs[0] & 0xFF) | ((value as u16) << 8),
-            0x0014 => self.bgxhofs[1] = (self.bgxhofs[1] & 0xFF00) | value as u16,
-            0x0015 => self.bgxhofs[1] = (self.bgxhofs[1] & 0xFF) | ((value as u16) << 8),
-            0x0016 => self.bgxvofs[1] = (self.bgxvofs[1] & 0xFF00) | value as u16,
-            0x0017 => self.bgxvofs[1] = (self.bgxvofs[1] & 0xFF) | ((value as u16) << 8),
-            0x0018 => self.bgxhofs[2] = (self.bgxhofs[2] & 0xFF00) | value as u16,
-            0x0019 => self.bgxhofs[2] = (self.bgxhofs[2] & 0xFF) | ((value as u16) << 8),
-            0x001A => self.bgxvofs[2] = (self.bgxvofs[2] & 0xFF00) | value as u16,
-            0x001B => self.bgxvofs[2] = (self.bgxvofs[2] & 0xFF) | ((value as u16) << 8),
-            0x001C => self.bgxhofs[3] = (self.bgxhofs[3] & 0xFF00) | value as u16,
-            0x001D => self.bgxhofs[3] = (self.bgxhofs[3] & 0xFF) | ((value as u16) << 8),
-            0x001E => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF00) | value as u16,
-            0x001F => self.bgxvofs[3] = (self.bgxvofs[3] & 0xFF) | ((value as u16) << 8),
-            0x0050 => self.bldcnt.set_bldcnt((self.bldcnt.0 & 0xFF00) | value as u16),
-            0x0051 => self.bldcnt.set_bldcnt((value as u16) << 8 | (self.bldcnt.0 & 0xFF)),
-            0x0052 => self.bldalpha.set_bldalpha((self.bldalpha.0 & 0xFF00) | value as u16),
-            0x0053 => self.bldalpha.set_bldalpha((value as u16) << 8 | (self.bldalpha.0 & 0xFF)),
-            0x0054 => self.bldy.set_evy(value & 0x1F),
-            _ => {}
+            0x0000 => self.dispcnt.set_dispcnt(value),
+            0x0004 => self.dispstat.set_dispstat(value),
+            0x0008 => self.bgxcnt[0].set_bg_control(value),
+            0x000A => self.bgxcnt[1].set_bg_control(value),
+            0x000C => self.bgxcnt[2].set_bg_control(value),
+            0x000E => self.bgxcnt[3].set_bg_control(value),
+            0x0010 => self.bgxhofs[0] = value,
+            0x0012 => self.bgxvofs[0] = value,
+            0x0014 => self.bgxhofs[1] = value,
+            0x0016 => self.bgxvofs[1] = value,
+            0x0018 => self.bgxhofs[2] = value,
+            0x001A => self.bgxvofs[2] = value,
+            0x001C => self.bgxhofs[3] = value,
+            0x001E => self.bgxvofs[3] = value,
+            0x0050 => self.bldcnt.set_bldcnt(value),
+            0x0052 => self.bldalpha.set_bldalpha(value),
+            0x0054 => self.bldy.set_bldy(value),
+            _ => unreachable!(),
+        }
+    }
+
+    fn write8(&mut self, address: u32, value: u8) {
+        let [lo, hi] = self.raw_read16(address & !1).to_le_bytes();
+        match address & 1 == 0 {
+            true => self.write16(address, (hi as u16) << 8 | value as u16),
+            false => self.write16(address & !1, (value as u16) << 8 | lo as u16),
+        }
+    }
+
+    fn raw_read16(&mut self, _address: u32) -> u16 {
+        match _address {
+            0x0000..=0x000F => self.read16(_address),
+            0x0010 => self.bgxhofs[0],
+            0x0012 => self.bgxvofs[0],
+            0x0014 => self.bgxhofs[1],
+            0x0016 => self.bgxvofs[1],
+            0x0018 => self.bgxhofs[2],
+            0x001A => self.bgxvofs[2],
+            0x001C => self.bgxhofs[3],
+            0x001E => self.bgxvofs[3],
+            0x0050 => self.read16(_address),
+            0x0052 => self.bldalpha.bldalpha(),
+            0x0054 => self.bldy.bldy(),
+            _ => 0,
         }
     }
 }

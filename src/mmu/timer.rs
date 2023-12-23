@@ -1,13 +1,16 @@
 use std::ops::{Index, IndexMut};
 
+use super::{irq::IF, Mcu};
 use proc_bitfield::ConvRaw;
-use super::{Mcu, irq::IF};
 
 /// Tuple struct to hold the four timers and manage read/writes.
 #[derive(Default)]
 pub struct Timers([Timer; 4]);
 
 impl Timers {
+    /// Tick all 4 timers based on their attributes and frequencies.
+    ///
+    /// Keep track of IDs for overflowing IRQ.
     pub fn tick(&mut self, iff: &mut IF) {
         for id in 0..4 {
             // TODO: Implement tick.
@@ -27,14 +30,14 @@ impl Mcu for Timers {
             0x010A => u16::from(self[2]),
             0x010C => self[3].counter,
             0x010F => u16::from(self[3]),
-            _ => unreachable!()
+            _ => 0,
         }
     }
 
     fn read8(&mut self, address: u32) -> u8 {
-        match address % 2 == 0 {
+        match address & 1 == 0 {
             true => self.read16(address) as u8,
-            false => (self.read16(address - 1) >> 8) as u8,
+            false => (self.read16(address & 1) >> 8) as u8,
         }
     }
 
@@ -48,14 +51,23 @@ impl Mcu for Timers {
             0x010A => self[2].update(value),
             0x010C => self[3].reload = value,
             0x010F => self[3].update(value),
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     fn write8(&mut self, address: u32, value: u8) {
-        match address % 2 == 0 {
-            true => self.write16(address, value as u16),
-            false => self.write16(address, (value as u16) << 8),
+        // Make sure to "read" reload to modify it on write and not "read" counter.
+        let [lo, hi] = if (address & !1) % 4 == 0 {
+            let t_idx = ((address & !1) - 0x0100) / 4;
+            self[t_idx as usize].reload
+        } else {
+            self.read16(address & !1)
+        }
+        .to_le_bytes();
+
+        match address & 1 == 0 {
+            true => self.write16(address, (hi as u16) << 8 | value as u16),
+            false => self.write16(address & !1, (value as u16) << 8 | lo as u16),
         }
     }
 }
