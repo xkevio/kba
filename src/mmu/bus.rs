@@ -67,9 +67,14 @@ impl Default for Bus {
 
 impl Bus {
     pub fn tick(&mut self, cycles: usize) {
-        self.ppu.cycle(&*self.vram, &self.palette_ram, &self.oam, &mut self.iff);
-        self.timers.tick(&mut self.iff, cycles);
         // TODO: APU, DMA, etc.
+        self.ppu.cycle(
+            &*self.vram,
+            &self.palette_ram,
+            &self.oam,
+            &mut self.iff
+        );
+        self.timers.tick(&mut self.iff, cycles);
     }
 }
 

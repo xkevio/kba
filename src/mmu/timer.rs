@@ -27,13 +27,12 @@ impl Timers {
                 Freq::F1024 => 1024,
             };
 
-            tm_overflow[ID] = if !self[ID].count_up && cycles % freq == 0 {
-                self[ID].tick()
-            } else if ID > 0 && tm_overflow[ID - 1] && self[ID].count_up {
-                self[ID].tick()
-            } else {
-                false
-            };
+            // Either tick up normally when the frequency is reached
+            // or use Count-Up-Timing when previous timer overflows (not timer 0).
+            if (!self[ID].count_up && cycles % freq == 0)
+                || (self[ID].count_up && tm_overflow[ID - 1] && ID > 0) {
+                    tm_overflow[ID] = self[ID].tick();
+                }
 
             if tm_overflow[ID] {
                 iff.set_timer~ID(true);
