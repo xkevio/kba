@@ -7,7 +7,7 @@ use crate::{
     mmu::{irq::IF, Mcu},
 };
 
-use super::sprite::Sprite;
+use super::{blend, sprite::Sprite};
 
 const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
@@ -137,28 +137,28 @@ impl Ppu {
     }
 
     /// Render and draw one scanline fully.
-    /// 
+    ///
     /// 1. `update_bg_scanline`:
     ///     - **if** mode < 3: `render_{text, affine}_bg` depending on mode.
     ///     - **else**: render directly into the buffer.
-    /// 
+    ///
     /// 2. `render_sprite_line`:
     ///     - collect sprites from OAM.
     ///     - render them into according `current_sprite_line`.
-    /// 
+    ///
     /// 3. `draw_line`:
     ///     - mix background and sprite lines according to their priorities.
     ///     - apply blending and other color effects.
     fn scanline(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8]) {
         // Render backgrounds by either drawing text backgrounds or affine backgrounds.
         self.update_bg_scanline(vram, palette_ram);
-        
+
         // Render sprites by first collecting all sprites from OAM
         // that are on this line, then drawing them. (todo: draw sprites for mode 3, 4, 5)
         self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
         self.render_sprite_line(vram, palette_ram);
-        
-        // If mode >= 3, we render directly into `self.buffer` 
+
+        // If mode >= 3, we render directly into `self.buffer`
         // and don't use the line draw function.
         if self.dispcnt.bg_mode() < 3 {
             self.draw_line();
@@ -275,6 +275,7 @@ impl Ppu {
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
 
         let mut render_line = vec![None; 512];
+        // self.apply_color_effect();
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
@@ -361,6 +362,54 @@ impl Ppu {
             // TODO: rot/scale later
         }
     }
+
+    // fn apply_color_effect(&mut self) {
+    //     let first_target_line = [
+    //         self.bldcnt.bg0_first_px(),
+    //         self.bldcnt.bg1_first_px(),
+    //         self.bldcnt.bg2_first_px(),
+    //         self.bldcnt.bg3_first_px(),
+    //     ];
+    //     let second_target_line = [
+    //         self.bldcnt.bg0_second_px(),
+    //         self.bldcnt.bg1_second_px(),
+    //         self.bldcnt.bg2_second_px(),
+    //         self.bldcnt.bg3_second_px(),
+    //     ];
+
+    //     let a = first_target_line.iter().position(|&bg| bg);
+    //     let b = second_target_line.iter().position(|&bg| bg);
+
+    //     if let (Some(a), Some(b)) = (a, b) {
+    //         if let Ok(c) = self.bldcnt.color_effect() {
+    //             match c {
+    //                 ColorEffect::AlphaBlending => {
+    //                     let mut test = Vec::new();
+
+    //                     for (px0, px1) in
+    //                         self.current_bg_line[a].iter().zip(self.current_bg_line[b])
+    //                     {
+    //                         if let (Some(px0), Some(px1)) = (px0, px1) {
+    //                             test.push(Some(blend(
+    //                                 *px0,
+    //                                 px1,
+    //                                 self.bldalpha.eva(),
+    //                                 self.bldalpha.evb(),
+    //                             )));
+    //                         } else {
+    //                             test.push(None);
+    //                         }
+    //                     }
+
+    //                     self.current_bg_line[a].copy_from_slice(&test);
+    //                 }
+    //                 ColorEffect::BrightnessIncrease => todo!(),
+    //                 ColorEffect::BrightnessDecrease => todo!(),
+    //                 ColorEffect::None => {}
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 impl Mcu for Ppu {

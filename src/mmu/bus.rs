@@ -68,12 +68,8 @@ impl Default for Bus {
 impl Bus {
     pub fn tick(&mut self, cycles: usize) {
         // TODO: APU, DMA, etc.
-        self.ppu.cycle(
-            &*self.vram,
-            &self.palette_ram,
-            &self.oam,
-            &mut self.iff
-        );
+        self.ppu
+            .cycle(&*self.vram, &self.palette_ram, &self.oam, &mut self.iff);
         self.timers.tick(&mut self.iff, cycles);
     }
 }
@@ -86,7 +82,7 @@ impl Mcu for Bus {
             0x02 => self.wram[address as usize % 0x0004_0000],
             0x03 => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
             0x04 => match address - 0x0400_0000 {
-                addr @ 0x0000..=0x001F => self.ppu.read8(addr),
+                addr @ 0x0000..=0x0050 => self.ppu.read8(addr),
                 addr @ 0x0100..=0x010F => self.timers.read8(addr),
                 0x0130 => self.key_input.keyinput() as u8,
                 0x0131 => (self.key_input.keyinput() >> 8) as u8,
@@ -115,7 +111,7 @@ impl Mcu for Bus {
             0x02 => self.wram[address as usize % 0x0004_0000] = value,
             0x03 => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
             0x04 => match address - 0x0400_0000 {
-                addr @ 0x0000..=0x001F => self.ppu.write8(addr, value),
+                addr @ (0x0000..=0x001F | 0x0050..=0x0054) => self.ppu.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
                 0x0200 => self.ie.set_ie(self.ie.0.set_bit_range::<0, 8>(value)),
                 0x0201 => self.ie.set_ie(self.ie.0.set_bit_range::<8, 16>(value)),
