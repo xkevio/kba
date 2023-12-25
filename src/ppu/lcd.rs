@@ -330,7 +330,7 @@ impl Ppu {
                 let tiles_on_line = &tiles[y_start..(y_start + (sprite.width() as usize / 8))];
 
                 for (x_idx, tile_id) in tiles_on_line.iter().enumerate() {
-                    let tile_addr = 0x10000 + tile_id * 32;
+                    let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 } + tile_id * 32;
                     let x_off = if sprite.h_flip { (tiles_on_line.len() - x_idx - 1) * 8 } else { x_idx * 8 };
 
                     for x in 0..8 {
