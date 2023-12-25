@@ -1,4 +1,5 @@
 use derivative::Derivative;
+use itertools::Itertools;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
@@ -7,7 +8,7 @@ use crate::{
     mmu::{irq::IF, Mcu},
 };
 
-use super::{blend, sprite::Sprite};
+use super::{blend, modify_brightness, sprite::Sprite};
 
 const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
@@ -275,7 +276,7 @@ impl Ppu {
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
 
         let mut render_line = vec![None; 512];
-        // self.apply_color_effect();
+        self.apply_color_effects();
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
@@ -363,53 +364,60 @@ impl Ppu {
         }
     }
 
-    // fn apply_color_effect(&mut self) {
-    //     let first_target_line = [
-    //         self.bldcnt.bg0_first_px(),
-    //         self.bldcnt.bg1_first_px(),
-    //         self.bldcnt.bg2_first_px(),
-    //         self.bldcnt.bg3_first_px(),
-    //     ];
-    //     let second_target_line = [
-    //         self.bldcnt.bg0_second_px(),
-    //         self.bldcnt.bg1_second_px(),
-    //         self.bldcnt.bg2_second_px(),
-    //         self.bldcnt.bg3_second_px(),
-    //     ];
+    // TODO: no obj to obj! and layer cannot blend with itself
+    fn apply_color_effects(&mut self) {
+        let src: u8 = self.bldcnt.0.bit_range::<0, 5>();
+        let dst: u8 = self.bldcnt.0.bit_range::<8, 13>();
 
-    //     let a = first_target_line.iter().position(|&bg| bg);
-    //     let b = second_target_line.iter().position(|&bg| bg);
+        let src_idx = src.trailing_zeros() as usize;
+        let dests = (0..4)
+            .filter(|i| dst & 1 << i != 0)
+            .sorted_by_key(|i| self.bgxcnt[*i].prio())
+            .collect::<Vec<_>>();
 
-    //     if let (Some(a), Some(b)) = (a, b) {
-    //         if let Ok(c) = self.bldcnt.color_effect() {
-    //             match c {
-    //                 ColorEffect::AlphaBlending => {
-    //                     let mut test = Vec::new();
+        let mut apply_line = Vec::with_capacity(512);
 
-    //                     for (px0, px1) in
-    //                         self.current_bg_line[a].iter().zip(self.current_bg_line[b])
-    //                     {
-    //                         if let (Some(px0), Some(px1)) = (px0, px1) {
-    //                             test.push(Some(blend(
-    //                                 *px0,
-    //                                 px1,
-    //                                 self.bldalpha.eva(),
-    //                                 self.bldalpha.evb(),
-    //                             )));
-    //                         } else {
-    //                             test.push(None);
-    //                         }
-    //                     }
+        // TODO: check that first dest layer is visible beneath src_idx (prio)
+        let src_line = match src.trailing_zeros() {
+            bg @ 0..=3 => self.current_bg_line[bg as usize],
+            4 => self.current_sprite_line[0],
+            _ => return, // todo: backdrop (color 0 of pal 0)
+        };
 
-    //                     self.current_bg_line[a].copy_from_slice(&test);
-    //                 }
-    //                 ColorEffect::BrightnessIncrease => todo!(),
-    //                 ColorEffect::BrightnessDecrease => todo!(),
-    //                 ColorEffect::None => {}
-    //             }
-    //         }
-    //     }
-    // }
+        // TODO: add obj layer to dest
+        let dst_line = dests.iter().fold(vec![None; 512], |acc, e| {
+            acc.iter()
+                .enumerate()
+                .map(|(idx, a)| a.or(self.current_bg_line[*e][idx]))
+                .collect_vec()
+        });
+
+        if let Ok(c) = self.bldcnt.color_effect() {
+            match c {
+                ColorEffect::AlphaBlending => {
+                    for (s, d) in src_line.iter().zip(dst_line) {
+                        if let (Some(s), Some(d)) = (s, d) {
+                            let blend_px = blend(*s, d, self.bldalpha.eva(), self.bldalpha.evb());
+                            apply_line.push(Some(blend_px));
+                        } else {
+                            apply_line.push(*s);
+                        }
+                    }
+                }
+                ColorEffect::BrightnessIncrease => {
+                    self.current_bg_line[src_idx] = self.current_bg_line[src_idx]
+                        .map(|s| s.map(|px| modify_brightness::<true>(px, self.bldy.evy())));
+                }
+                ColorEffect::BrightnessDecrease => {
+                    self.current_bg_line[src_idx] = self.current_bg_line[src_idx]
+                        .map(|s| s.map(|px| modify_brightness::<false>(px, self.bldy.evy())));
+                }
+                ColorEffect::None => {}
+            }
+        }
+
+        self.current_bg_line[src_idx].copy_from_slice(&apply_line);
+    }
 }
 
 impl Mcu for Ppu {
