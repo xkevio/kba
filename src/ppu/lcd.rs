@@ -136,23 +136,37 @@ impl Ppu {
         self.cycle += 1;
     }
 
-    // TODO: to combine update&draw methods for bgs and sprites.
+    /// Render and draw one scanline fully.
+    /// 
+    /// 1. `update_bg_scanline`:
+    ///     - **if** mode < 3: `render_{text, affine}_bg` depending on mode.
+    ///     - **else**: render directly into the buffer.
+    /// 
+    /// 2. `render_sprite_line`:
+    ///     - collect sprites from OAM.
+    ///     - render them into according `current_sprite_line`.
+    /// 
+    /// 3. `draw_line`:
+    ///     - mix background and sprite lines according to their priorities.
+    ///     - apply blending and other color effects.
     fn scanline(&mut self, vram: &[u8], palette_ram: &[u8], oam: &[u8]) {
         // Render backgrounds by either drawing text backgrounds or affine backgrounds.
-        // If mode >= 3, we render directly into `self.buffer` and don't use the line draw function.
         self.update_bg_scanline(vram, palette_ram);
+        
+        // Render sprites by first collecting all sprites from OAM
+        // that are on this line, then drawing them. (todo: draw sprites for mode 3, 4, 5)
+        self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
+        self.render_sprite_line(vram, palette_ram);
+        
+        // If mode >= 3, we render directly into `self.buffer` 
+        // and don't use the line draw function.
         if self.dispcnt.bg_mode() < 3 {
-            // Render sprites by first collecting all sprites from OAM
-            // that are on this line, then drawing them.
-            self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
-            self.render_sprite_line(vram, palette_ram);
-            self.draw_bg_line();
+            self.draw_line();
         }
     }
 
-    /// Render one scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
+    /// Render one background scanline fully. (Mode 3 & 4 render directly into `self.buffer`)
     fn update_bg_scanline(&mut self, vram: &[u8], palette_ram: &[u8]) {
-        // Render backgrounds.
         match self.dispcnt.bg_mode() {
             0 => {
                 self.current_bg_line = [[None; 512]; 4];
@@ -251,9 +265,8 @@ impl Ppu {
         }
     }
 
-    // TODO: rename functions
-    /// Draw the scanline by placing it into the buffer. (For mode 0, 1, 2).
-    fn draw_bg_line(&mut self) {
+    /// Draw the background scanline and sprites by placing it into the buffer. (For mode 0, 1, 2).
+    fn draw_line(&mut self) {
         let y = self.vcount.ly() as usize;
 
         // Get bits 8..=11 (const `END` parameter has to be one past) to get bg-enable bits.
