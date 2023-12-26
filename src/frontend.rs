@@ -26,9 +26,9 @@ macro_rules! process_scancodes {
 }
 
 pub struct SDLApplication {
-    event_pump: EventPump,
     canvas: Canvas<Window>,
     texture_creator: TextureCreator<WindowContext>,
+    event_pump: EventPump,
 }
 
 impl SDLApplication {
@@ -59,7 +59,6 @@ impl SDLApplication {
             .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
             .map_err(|e| e.to_string())?;
 
-        // Actual loop that runs the program and the emulator.
         'main: loop {
             for event in self.event_pump.poll_iter() {
                 if let Event::Quit { .. } = event {
