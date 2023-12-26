@@ -375,8 +375,6 @@ impl Ppu {
             .sorted_by_key(|i| self.bgxcnt[*i].prio())
             .collect::<Vec<_>>();
 
-        let mut apply_line = Vec::with_capacity(512);
-
         // TODO: check that first dest layer is visible beneath src_idx (prio)
         let src_line = match src.trailing_zeros() {
             bg @ 0..=3 => self.current_bg_line[bg as usize],
@@ -395,6 +393,8 @@ impl Ppu {
         if let Ok(c) = self.bldcnt.color_effect() {
             match c {
                 ColorEffect::AlphaBlending => {
+                    let mut apply_line = Vec::with_capacity(512);
+
                     for (s, d) in src_line.iter().zip(dst_line) {
                         if let (Some(s), Some(d)) = (s, d) {
                             let blend_px = blend(*s, d, self.bldalpha.eva(), self.bldalpha.evb());
@@ -403,6 +403,8 @@ impl Ppu {
                             apply_line.push(*s);
                         }
                     }
+
+                    self.current_bg_line[src_idx].copy_from_slice(&apply_line);
                 }
                 ColorEffect::BrightnessIncrease => {
                     self.current_bg_line[src_idx] = self.current_bg_line[src_idx]
@@ -415,8 +417,6 @@ impl Ppu {
                 ColorEffect::None => {}
             }
         }
-
-        self.current_bg_line[src_idx].copy_from_slice(&apply_line);
     }
 }
 
