@@ -2,7 +2,6 @@ use std::ops::{Index, IndexMut};
 
 use super::{irq::IF, Mcu};
 use proc_bitfield::ConvRaw;
-use seq_macro::seq;
 
 /// Tuple struct to hold the four timers and manage read/writes.
 #[derive(Default)]
@@ -12,16 +11,15 @@ impl Timers {
     /// Tick all 4 timers based on their attributes and frequencies.
     ///
     /// Keep track of IDs for overflowing IRQ.
-    #[allow(arithmetic_overflow)]
     pub fn tick(&mut self, iff: &mut IF, cycles: usize) {
         let mut tm_overflow = [false; 4];
 
-        seq!(ID in 0..4 {
-            if !self[ID].start {
-                return;
+        for id in 0..4 {
+            if !self[id].start {
+                continue;
             }
 
-            let freq = match self[ID].freq {
+            let freq = match self[id].freq {
                 Freq::F1 => 1,
                 Freq::F64 => 64,
                 Freq::F256 => 256,
@@ -30,15 +28,15 @@ impl Timers {
 
             // Either tick up normally when the frequency is reached
             // or use Count-Up-Timing when previous timer overflows (not timer 0).
-            if (!self[ID].count_up && cycles % freq == 0)
-                || (self[ID].count_up && ID > 0 && tm_overflow[ID - 1]) {
-                    tm_overflow[ID] = self[ID].tick();
+            if (!self[id].count_up && cycles % freq == 0)
+                || (self[id].count_up && id > 0 && tm_overflow[id - 1]) {
+                    tm_overflow[id] = self[id].tick();
                 }
 
-            if tm_overflow[ID] {
-                iff.set_timer~ID(true);
+            if tm_overflow[id] {
+                iff.set_timer(id);
             }
-        });
+        }
     }
 }
 

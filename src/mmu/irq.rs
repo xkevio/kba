@@ -69,4 +69,15 @@ bitfield! {
         pub keypad: bool @ 12,
         pub gamepak: bool @ 13,
     }
+
+}
+
+impl IF {
+    pub fn set_timer(&mut self, id: usize) {
+        self.0 |= 1 << (id + 3);
+    }
+
+    pub fn set_dma(&mut self, id: usize) {
+        self.0 |= 1 << (id + 8);
+    }
 }

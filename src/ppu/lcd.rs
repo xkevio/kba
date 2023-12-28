@@ -461,7 +461,7 @@ impl Mcu for Ppu {
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
-            _ => unreachable!(),
+            _ => {},
         }
     }
 
