@@ -66,13 +66,13 @@ impl Mcu for Timers {
     fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0100 => self[0].reload = value,
-            0x0102 => self[0].update(value),
+            0x0102 => self[0].apply_tmr_cnt(value),
             0x0104 => self[1].reload = value,
-            0x0106 => self[1].update(value),
+            0x0106 => self[1].apply_tmr_cnt(value),
             0x0108 => self[2].reload = value,
-            0x010A => self[2].update(value),
+            0x010A => self[2].apply_tmr_cnt(value),
             0x010C => self[3].reload = value,
-            0x010E => self[3].update(value),
+            0x010E => self[3].apply_tmr_cnt(value),
             _ => unreachable!(),
         }
     }
@@ -120,7 +120,7 @@ pub struct Timer {
 
 impl Timer {
     /// Update all the bits from the TMxCNT_H register.
-    fn update(&mut self, value: u16) {
+    fn apply_tmr_cnt(&mut self, value: u16) {
         self.start = value & (1 << 7) != 0;
         self.irq = value & (1 << 6) != 0;
         self.count_up = value & (1 << 2) != 0;

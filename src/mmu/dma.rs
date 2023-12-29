@@ -94,7 +94,8 @@ pub struct DMA {
 }
 
 impl DMA {
-    pub fn apply_dma_cnt(&mut self, value: u16) {
+    /// Update all the bits from the DMAxCNT_H register.
+    fn apply_dma_cnt(&mut self, value: u16) {
         self.dst_addr_ctrl = AddrControl::try_from((value & 0x60) >> 5).unwrap();
         self.src_addr_ctrl = AddrControl::try_from((value & 0x110) >> 7).unwrap();
         self.start_timing = StartTiming::try_from((value & 0x3000) >> 12).unwrap();
