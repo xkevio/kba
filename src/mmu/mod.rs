@@ -1,4 +1,5 @@
 pub mod bus;
+pub mod dma;
 pub mod game_pak;
 pub mod irq;
 pub mod timer;

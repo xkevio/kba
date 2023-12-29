@@ -1,6 +1,7 @@
 use proc_bitfield::{bitfield, BitRange};
 
 use super::{
+    dma::DMAChannels,
     game_pak::GamePak,
     irq::{IE, IF, IME},
     timer::Timers,
@@ -26,6 +27,8 @@ pub struct Bus {
 
     /// Four incrementing 16-bit timers.
     pub timers: Timers,
+    /// Four DMA transfer channels.
+    pub dma_channels: DMAChannels,
 
     /// On-board and On-chip Work RAM.
     pub wram: Box<[u8; 0x48000]>,
@@ -53,6 +56,7 @@ impl Default for Bus {
             iff: IF(0),
 
             timers: Timers::default(),
+            dma_channels: DMAChannels::default(),
 
             wram: box_arr![0x00; 0x48000],
             palette_ram: [0x00; 0x400],
