@@ -29,9 +29,10 @@ impl Timers {
             // Either tick up normally when the frequency is reached
             // or use Count-Up-Timing when previous timer overflows (not timer 0).
             if (!self[id].count_up && cycles % freq == 0)
-                || (self[id].count_up && id > 0 && tm_overflow[id - 1]) {
-                    tm_overflow[id] = self[id].tick();
-                }
+                || (self[id].count_up && id > 0 && tm_overflow[id - 1])
+            {
+                tm_overflow[id] = self[id].tick();
+            }
 
             if tm_overflow[id] {
                 iff.set_timer(id);

@@ -87,9 +87,11 @@ impl SDLApplication {
             }
 
             // Update frame and convert Option pixel values to corresponding colors.
+            // Needs backdrop color which is always color 0 of pal 0 for ignored pixels.
             self.update_texture(
                 &mut texture,
                 &kba.cpu.bus.ppu.buffer[0..(LCD_WIDTH * LCD_HEIGHT)],
+                u16::from_le_bytes([kba.cpu.bus.palette_ram[0], kba.cpu.bus.palette_ram[1]]),
             )?;
 
             kba.cycles = 0;
@@ -103,12 +105,17 @@ impl SDLApplication {
         Ok(())
     }
 
-    fn update_texture(&self, texture: &mut Texture, buffer: &[Option<u16>]) -> SdlResult<()> {
+    fn update_texture(
+        &self,
+        texture: &mut Texture,
+        buffer: &[Option<u16>],
+        backdrop: u16,
+    ) -> SdlResult<()> {
         texture.with_lock(None, |buf: &mut [u8], _: usize| {
             for (i, px) in buffer[0..(LCD_WIDTH * LCD_HEIGHT)].iter().enumerate() {
                 let [r, g, b, a] = match px {
                     Some(color) => ppu::rgb555_to_color(*color).to_be_bytes(),
-                    None => [0, 0, 0, 255],
+                    None => ppu::rgb555_to_color(backdrop).to_be_bytes(),
                 };
 
                 buf[i * 4] = r;
