@@ -316,7 +316,7 @@ impl Ppu {
         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
         let screen_y = self.vcount.ly() as i32;
 
-        // Screen space -> Texture space. todo: wraparound bit
+        // Screen space -> Texture space.
         for screen_x in 0..LCD_WIDTH {
             let mut tx = (bg_refx + screen_x as i32) >> 8;
             let mut ty = (bg_refy + screen_y) >> 8;
@@ -576,10 +576,22 @@ impl Mcu for Ppu {
             0x0032 => self.bgxpb[1] = value as i16,
             0x0034 => self.bgxpc[1] = value as i16,
             0x0036 => self.bgxpd[1] = value as i16,
-            0x0038 => self.bgxx[1] = self.bgxx[1] | value as i32,
-            0x003A => self.bgxx[1] = (self.bgxx[1] & 0x0FFF_0000) | ((value as i32) << 16),
-            0x003C => self.bgxy[1] = self.bgxy[1] | value as i32,
-            0x003E => self.bgxy[1] = (self.bgxy[1] & 0x0FFF_0000) | ((value as i32) << 16),
+            0x0038 => {
+                self.bgxx[1] = self.bgxx[1].set_bit_range::<0, 16>(value);
+                self.internal_ref_xx[1] = self.bgxx[1];
+            },
+            0x003A => {
+                self.bgxx[1] = self.bgxx[1].set_bit_range::<16, 28>(value & 0xFFF);
+                self.internal_ref_xx[1] = self.bgxx[1];
+            },
+            0x003C => {
+                self.bgxy[1] = self.bgxy[1].set_bit_range::<0, 16>(value);
+                self.internal_ref_xy[1] = self.bgxy[1];
+            },
+            0x003E => {
+                self.bgxy[1] = self.bgxy[1].set_bit_range::<16, 28>(value & 0xFFF);
+                self.internal_ref_xy[1] = self.bgxy[1];
+            },
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
