@@ -1,6 +1,6 @@
-use std::ops::{Index, IndexMut};
-use proc_bitfield::ConvRaw;
 use super::Mcu;
+use proc_bitfield::ConvRaw;
+use std::ops::{Index, IndexMut};
 
 #[derive(Default, Clone, Copy)]
 pub struct DMAChannels([DMA; 4]);

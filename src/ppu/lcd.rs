@@ -29,6 +29,16 @@ pub struct Ppu {
     pub bgxhofs: [u16; 4],
     pub bgxvofs: [u16; 4],
 
+    /// Reference X, Y coordinates for affine background scrolling.
+    pub bgxx: [i32; 2],
+    pub bgxy: [i32; 2],
+
+    /// Rotation/Scaling parameters for affine transformations.
+    pub bgxpa: [i16; 2],
+    pub bgxpb: [i16; 2],
+    pub bgxpc: [i16; 2],
+    pub bgxpd: [i16; 2],
+
     pub bldcnt: BLDCNT,
     pub bldalpha: BLDALPHA,
     pub bldy: BLDY,
@@ -42,9 +52,12 @@ pub struct Ppu {
     /// Current to-be-drawn line for sprites, one for each prio.
     #[derivative(Default(value = "[[None; 512]; 4]"))]
     current_sprite_line: [[Option<u16>; 512]; 4],
-
     /// Up to 128 sprites from OAM for the current LY.
     current_sprites: Vec<Sprite>,
+
+    /// The internal reference point registers.
+    internal_ref_xx: [i32; 2],
+    internal_ref_xy: [i32; 2],
 
     current_mode: Mode,
     cycle: u16,
@@ -84,6 +97,12 @@ impl Ppu {
             }
             Mode::HBlank => {
                 if self.cycle > TOTAL_LEN {
+                    // Internal reference point regs get incremented by dmx/dmy each scanline.
+                    for bg in 0..2 {
+                        self.internal_ref_xx[bg] += self.bgxpb[bg] as i32;
+                        self.internal_ref_xy[bg] += self.bgxpd[bg] as i32;
+                    }
+
                     self.cycle = 0;
                     self.dispstat.set_hblank(false);
 
@@ -114,6 +133,10 @@ impl Ppu {
                 }
 
                 if self.cycle > TOTAL_LEN {
+                    // Reference points get copied to internal regs during VBlank.
+                    self.internal_ref_xx = self.bgxx;
+                    self.internal_ref_xy = self.bgxy;
+
                     self.cycle = 0;
                     self.dispstat.set_hblank(false);
 
@@ -177,6 +200,21 @@ impl Ppu {
                 seq!(BG in 0..=3 {
                     if self.dispcnt.bg~BG() {
                         self.render_text_bg::<BG>(vram, palette_ram);
+                    }
+                });
+            }
+            1 => {
+                self.current_bg_line = [[None; 512]; 4];
+
+                // Render backgrounds by iterating and
+                // checking which are enabled via seq-macro.
+                seq!(BG in 0..=2 {
+                    if self.dispcnt.bg~BG() {
+                        if BG < 2 {
+                            self.render_text_bg::<BG>(vram, palette_ram);
+                        } else {
+                            self.render_affine_bg::<BG>(vram, palette_ram);
+                        }
                     }
                 });
             }
@@ -262,6 +300,62 @@ impl Ppu {
 
             if px_idx != 0 {
                 self.current_bg_line[BG][x] = Some(px);
+            }
+        }
+    }
+
+    #[rustfmt::skip]
+    fn render_affine_bg<const BG: usize>(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        let bg_cnt = self.bgxcnt[BG];
+        let screen_size = 128 << bg_cnt.screen_size();
+
+        let mut bg_refx = self.internal_ref_xx[BG - 2] << 4 >> 4;
+        let mut bg_refy = self.internal_ref_xy[BG - 2] << 4 >> 4;
+
+        let (pa, pc) = (self.bgxpa[BG - 2] as i32, self.bgxpc[BG - 2] as i32);
+        let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+        let screen_y = self.vcount.ly() as i32;
+
+        // Screen space -> Texture space. todo: wraparound bit
+        for screen_x in 0..LCD_WIDTH {
+            let mut tx = (bg_refx + screen_x as i32) >> 8;
+            let mut ty = (bg_refy + screen_y) >> 8;
+
+            bg_refx += pa;
+            bg_refy += pc;
+
+            // Transparency or Wraparound when display area overflow.
+            if !bg_cnt.disp_area_overflow() {
+                if !(0..screen_size).contains(&tx) 
+                    || !(0..screen_size).contains(&ty) 
+                {
+                    continue;
+                }
+            } else {
+                tx %= screen_size;
+                ty %= screen_size;
+            }
+
+            let map_data = bg_cnt.screen_base_block() as u32 * 0x800
+                + 2 * (32 * (ty as u32 / 8) + (tx as u32 / 8));
+
+            let tile_id = vram[map_data as usize];
+            let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * 64;
+
+            let tile_off = (ty as usize % 8) * 8 + (tx as usize % 8);
+            let tile_addr = tile_start_addr + tile_off;
+
+            let (px_idx, px) = {
+                let px_idx = vram[tile_addr] as usize;
+
+                (px_idx, u16::from_be_bytes([
+                    palette_ram[px_idx * 2 + 1], 
+                    palette_ram[px_idx * 2]
+                ]))
+            };
+
+            if px_idx != 0 {
+                self.current_bg_line[BG][screen_x] = Some(px);
             }
         }
     }
@@ -458,6 +552,34 @@ impl Mcu for Ppu {
             0x001A => self.bgxvofs[2] = value,
             0x001C => self.bgxhofs[3] = value,
             0x001E => self.bgxvofs[3] = value,
+            0x0020 => self.bgxpa[0] = value as i16,
+            0x0022 => self.bgxpb[0] = value as i16,
+            0x0024 => self.bgxpc[0] = value as i16,
+            0x0026 => self.bgxpd[0] = value as i16,
+            0x0028 => {
+                self.bgxx[0] = self.bgxx[0].set_bit_range::<0, 16>(value);
+                self.internal_ref_xx[0] = self.bgxx[0];
+            }
+            0x002A => {
+                self.bgxx[0] = self.bgxx[0].set_bit_range::<16, 28>(value & 0xFFF);
+                self.internal_ref_xx[0] = self.bgxx[0];
+            }
+            0x002C => {
+                self.bgxy[0] = self.bgxy[0].set_bit_range::<0, 16>(value);
+                self.internal_ref_xy[0] = self.bgxy[0];
+            }
+            0x002E => {
+                self.bgxy[0] = self.bgxy[0].set_bit_range::<16, 28>(value & 0xFFF);
+                self.internal_ref_xy[0] = self.bgxy[0];
+            }
+            0x0030 => self.bgxpa[1] = value as i16,
+            0x0032 => self.bgxpb[1] = value as i16,
+            0x0034 => self.bgxpc[1] = value as i16,
+            0x0036 => self.bgxpd[1] = value as i16,
+            0x0038 => self.bgxx[1] = self.bgxx[1] | value as i32,
+            0x003A => self.bgxx[1] = (self.bgxx[1] & 0x0FFF_0000) | ((value as i32) << 16),
+            0x003C => self.bgxy[1] = self.bgxy[1] | value as i32,
+            0x003E => self.bgxy[1] = (self.bgxy[1] & 0x0FFF_0000) | ((value as i32) << 16),
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
@@ -486,6 +608,22 @@ impl Mcu for Ppu {
             0x001A => self.bgxvofs[2],
             0x001C => self.bgxhofs[3],
             0x001E => self.bgxvofs[3],
+            0x0020 => self.bgxpa[0] as u16,
+            0x0022 => self.bgxpb[0] as u16,
+            0x0024 => self.bgxpc[0] as u16,
+            0x0026 => self.bgxpd[0] as u16,
+            0x0028 => self.bgxx[0] as u16,
+            0x002A => (self.bgxx[0] >> 16) as u16,
+            0x002C => self.bgxy[0] as u16,
+            0x002E => (self.bgxy[0] >> 16) as u16,
+            0x0030 => self.bgxpa[1] as u16,
+            0x0032 => self.bgxpb[1] as u16,
+            0x0034 => self.bgxpc[1] as u16,
+            0x0036 => self.bgxpd[1] as u16,
+            0x0038 => self.bgxx[1] as u16,
+            0x003A => (self.bgxx[1] >> 16) as u16,
+            0x003C => self.bgxy[1] as u16,
+            0x003E => (self.bgxy[1] >> 16) as u16,
             0x0050 => self.read16(_address),
             0x0052 => self.bldalpha.bldalpha(),
             0x0054 => self.bldy.bldy(),
