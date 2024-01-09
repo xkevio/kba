@@ -52,8 +52,11 @@ pub struct Ppu {
     /// Current to-be-drawn line for sprites, one for each prio.
     #[derivative(Default(value = "[[None; 512]; 4]"))]
     current_sprite_line: [[Option<u16>; 512]; 4],
+
     /// Up to 128 sprites from OAM for the current LY.
     current_sprites: Vec<Sprite>,
+    /// 32 groups of rotation/scaling data.
+    current_rot_scale: Vec<(i16, i16, i16, i16)>,
 
     /// The internal reference point registers.
     internal_ref_xx: [i32; 2],
@@ -180,6 +183,7 @@ impl Ppu {
         // Render sprites by first collecting all sprites from OAM
         // that are on this line, then drawing them. (todo: draw sprites for mode 3, 4, 5)
         self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
+        self.current_rot_scale = Sprite::collect_rot_scale_params(oam);
         self.render_sprite_line(vram, palette_ram);
 
         // If mode >= 3, we render directly into `self.buffer`
@@ -326,8 +330,8 @@ impl Ppu {
 
             // Transparency or Wraparound when display area overflow.
             if !bg_cnt.disp_area_overflow() {
-                if !(0..screen_size).contains(&tx) 
-                    || !(0..screen_size).contains(&ty) 
+                if !(0..screen_size).contains(&tx)
+                    || !(0..screen_size).contains(&ty)
                 {
                     continue;
                 }
@@ -349,7 +353,7 @@ impl Ppu {
                 let px_idx = vram[tile_addr] as usize;
 
                 (px_idx, u16::from_be_bytes([
-                    palette_ram[px_idx * 2 + 1], 
+                    palette_ram[px_idx * 2 + 1],
                     palette_ram[px_idx * 2]
                 ]))
             };
@@ -401,60 +405,70 @@ impl Ppu {
 
         self.current_sprite_line = [[None; 512]; 4];
         for sprite in self.current_sprites.iter().rev() {
-            if !sprite.rot_scale && !sprite.double_or_disable {
-                let tile_amount = (sprite.width() / 8) * (sprite.height() / 8);
-                let mut tiles = Vec::new();
+            if true {
+                let y: u16 = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16);
 
-                for i in 0..tile_amount {
-                    let tile_nums = sprite.tile_id as u32
+                let (pa, pb, pc, pd) = self.current_rot_scale[sprite.rot_scale_param as usize];
+                
+                for spx in 0..sprite.width() {
+                    let sprite_x = sprite.x + spx as u16;
+
+                    let lx = sprite_x - sprite.x;
+                    let ly = y - sprite.y as u16;
+
+                    let mut tx = pa * (lx as i16 - (sprite.width() as i16 / 2)) + pb * (ly as i16 - (sprite.height() as i16 / 2));
+                    let mut ty = pc * (lx as i16 - (sprite.width() as i16 / 2)) + pd * (ly as i16 - (sprite.height() as i16 / 2));
+
+                    tx >>= 8;
+                    ty >>= 8;
+
+                    let tw = if sprite.h_flip {
+                        (sprite.width() as u16 / 8) - (tx as u16 / 8) - 1
+                    } else {
+                        tx as u16 / 8
+                    };
+
+                    let tile_id = sprite.tile_id 
+                        + tw as u16 * (sprite.bpp as u16 + 1)
                         + if self.dispcnt.obj_char_vram_map() {
-                            i as u32 * (sprite.bpp as u32 + 1)
+                            match sprite.v_flip {
+                                true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * (sprite.width() as u16 / 8),
+                                false => y / 8 * (sprite.width() as u16 / 8)
+                            }
                         } else {
-                            let i = i % (sprite.width() / 8);
-                            (tiles.len() as u32 / (sprite.width() as u32 / 8) * 0x20)
-                                + (i as u32 * (sprite.bpp as u32 + 1))
+                            match sprite.v_flip {
+                                true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * 0x20,
+                                false => y / 8 * 0x20
+                            }
                         };
 
-                    tiles.push(tile_nums % 1024);
-                }
+                    let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 } 
+                        + (tile_id as usize % 1024) * 32;
 
-                let y_diff = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16) as usize & 0xFF;
-                let y_start = match sprite.v_flip {
-                    true => (sprite.height() as usize / 8) - (y_diff / 8) - 1,
-                    false => y_diff / 8,
-                } * (sprite.width() as usize / 8);
-                let tiles_on_line = &tiles[y_start..(y_start + (sprite.width() as usize / 8))];
+                    let screen_x = sprite_x as usize % 512;
+                    let tile_off = if sprite.v_flip { 7 - (ty as u16 % 8) } else { ty as u16 % 8 } 
+                        * 8 + if sprite.h_flip { 7 - (tx as u16 % 8) } else { tx as u16 % 8 };
 
-                for (x_idx, tile_id) in tiles_on_line.iter().enumerate() {
-                    let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 } + tile_id * 32;
-                    let x_off = if sprite.h_flip { (tiles_on_line.len() - x_idx - 1) * 8 } else { x_idx * 8 };
+                    let (px_idx, px) = if !sprite.bpp {
+                        let px_idx = (vram[tile_addr as usize + tile_off as usize / 2] >> ((tile_off & 1) * 4)) & 0xF;
+                        (px_idx, u16::from_be_bytes([
+                            palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
+                            palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
+                        ]))
+                    } else {
+                        let px_idx = vram[tile_addr as usize + tile_off as usize];
+                        (px_idx, u16::from_be_bytes([
+                            palette_ram[0x200 + px_idx as usize * 2 + 1],
+                            palette_ram[0x200 + px_idx as usize * 2],
+                        ]))
+                    };
 
-                    for x in 0..8 {
-                        let screen_x = (sprite.x as usize + x + x_off) % 512;
-                        let tile_off = if sprite.v_flip { 7 - (y_diff % 8) } else { y_diff % 8 } * 8 + if sprite.h_flip { 7 - x } else { x };
-
-                        let (px_idx, px) = if !sprite.bpp {
-                            let px_idx = (vram[tile_addr as usize + tile_off / 2] >> ((tile_off & 1) * 4)) & 0xF;
-                            (px_idx, u16::from_be_bytes([
-                                palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
-                                palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
-                            ]))
-                        } else {
-                            let px_idx = vram[tile_addr as usize + tile_off];
-                            (px_idx, u16::from_be_bytes([
-                                palette_ram[0x200 + px_idx as usize * 2 + 1],
-                                palette_ram[0x200 + px_idx as usize * 2],
-                            ]))
-                        };
-
-                        if px_idx != 0 {
-                            self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
-                        }
+                    if px_idx != 0 {
+                        self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
                     }
                 }
-            }
 
-            // TODO: rot/scale later
+            }// TODO: rot/scale later
         }
     }
 
@@ -579,19 +593,19 @@ impl Mcu for Ppu {
             0x0038 => {
                 self.bgxx[1] = self.bgxx[1].set_bit_range::<0, 16>(value);
                 self.internal_ref_xx[1] = self.bgxx[1];
-            },
+            }
             0x003A => {
                 self.bgxx[1] = self.bgxx[1].set_bit_range::<16, 28>(value & 0xFFF);
                 self.internal_ref_xx[1] = self.bgxx[1];
-            },
+            }
             0x003C => {
                 self.bgxy[1] = self.bgxy[1].set_bit_range::<0, 16>(value);
                 self.internal_ref_xy[1] = self.bgxy[1];
-            },
+            }
             0x003E => {
                 self.bgxy[1] = self.bgxy[1].set_bit_range::<16, 28>(value & 0xFFF);
                 self.internal_ref_xy[1] = self.bgxy[1];
-            },
+            }
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),

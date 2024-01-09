@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use proc_bitfield::ConvRaw;
 
 pub struct Sprite {
@@ -39,6 +40,7 @@ pub enum ObjShape {
 }
 
 impl Sprite {
+    /// Collect up to 128 OBJ attributes in OAM, based on the current line.
     pub fn collect_obj_ly(oam: &[u8], ly: u8) -> Vec<Sprite> {
         let mut sprites = Vec::new();
 
@@ -70,6 +72,27 @@ impl Sprite {
         }
 
         sprites
+    }
+
+    /// Collect all 32 rotation/scaling parameters for affine sprites.
+    pub fn collect_rot_scale_params(oam: &[u8]) -> Vec<(i16, i16, i16, i16)> {
+        let mut params = Vec::new();
+
+        for i in 0..32 {
+            let x = (0..4).map(|p| {
+                let oam_idx = 6 + (i * 0x20) + (p * 8);
+                i16::from_le_bytes([
+                    oam[oam_idx as usize],
+                    oam[(oam_idx + 1) as usize],
+                ])
+            }).collect_tuple();
+
+            if let Some(x) = x {
+                params.push(x);
+            }
+        }
+
+        params
     }
 
     pub fn width(&self) -> u8 {
