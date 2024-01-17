@@ -364,6 +364,101 @@ impl Ppu {
         }
     }
 
+    /// Render all sprites in OAM at the current line.
+    ///
+    /// Sprite prio x > BG prio x for x in [0, 3].
+    #[rustfmt::skip]
+    fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8]) {
+        if !self.dispcnt.obj() {
+            return;
+        }
+
+        self.current_sprite_line = [[None; 512]; 4];
+        for sprite in self.current_sprites.iter().rev() {
+            if !sprite.rot_scale && sprite.double_or_disable {
+                continue;
+            }
+
+            // Difference of y inside the sprite.
+            let y = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16);
+
+            // Use identity matrix for regular sprites and the correct params for affine.
+            let (pa, pb, pc, pd) = match sprite.rot_scale {
+                true => self.current_rot_scale[sprite.rot_scale_param as usize],
+                false => (0x100, 0, 0, 0x100),
+            };
+
+            let width = sprite.width() << sprite.double_or_disable as u8;
+            let height = sprite.height() << sprite.double_or_disable as u8;
+
+            for spx in 0..width {
+                let spx_off = sprite.x + spx as u16;
+
+                // "Local" sprite coordinates within its bounding box.
+                let lx = (spx_off - sprite.x) as i16;
+                let ly = y as i16;
+
+                // Transform into texture space with affine transformation.
+                let mut tx = (pa * (lx - (width as i16 / 2)) + pb * (ly - (height as i16 / 2))) >> 8;
+                let mut ty = (pc * (lx - (width as i16 / 2)) + pd * (ly - (height as i16 / 2))) >> 8;
+
+                // Adjust sprite center.
+                tx += ((width as i16) / 2) >> sprite.double_or_disable as i16;
+                ty += ((height as i16) / 2) >> sprite.double_or_disable as i16;
+
+                // Disable sprite wrapping and repeating itself.
+                if tx < 0 || tx >= sprite.width() as i16 || ty < 0 || ty >= sprite.height() as i16 {
+                    continue;
+                }
+
+                let tw = if sprite.h_flip && !sprite.rot_scale {
+                    (sprite.width() as u16 / 8) - (tx as u16 / 8) - 1
+                } else {
+                    tx as u16 / 8
+                };
+
+                let tile_id = sprite.tile_id
+                    + tw as u16 * (sprite.bpp as u16 + 1)
+                    + if self.dispcnt.obj_char_vram_map() {
+                        match sprite.v_flip && !sprite.rot_scale {
+                            true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * (sprite.width() as u16 / 8),
+                            false => ty as u16 / 8 * (sprite.width() as u16 / 8)
+                        }
+                    } else {
+                        match sprite.v_flip && !sprite.rot_scale {
+                            true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * 0x20,
+                            false => ty as u16 / 8 * 0x20
+                        }
+                    };
+
+                let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 }
+                    + (tile_id as usize % 1024) * 32;
+
+                let screen_x = spx_off as usize % 512;
+                let tile_off = if sprite.v_flip && !sprite.rot_scale { 7 - (ty as u16 % 8) } else { ty as u16 % 8 }
+                    * 8 + if sprite.h_flip && !sprite.rot_scale { 7 - (tx as u16 % 8) } else { tx as u16 % 8 };
+
+                let (px_idx, px) = if !sprite.bpp {
+                    let px_idx = (vram[tile_addr as usize + tile_off as usize / 2] >> ((tile_off & 1) * 4)) & 0xF;
+                    (px_idx, u16::from_be_bytes([
+                        palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
+                        palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
+                    ]))
+                } else {
+                    let px_idx = vram[tile_addr as usize + tile_off as usize];
+                    (px_idx, u16::from_be_bytes([
+                        palette_ram[0x200 + px_idx as usize * 2 + 1],
+                        palette_ram[0x200 + px_idx as usize * 2],
+                    ]))
+                };
+
+                if px_idx != 0 {
+                    self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
+                }
+            }
+        }
+    }
+
     /// Draw the background scanline and sprites by placing it into the buffer. (For mode 0, 1, 2).
     fn draw_line(&mut self) {
         let y = self.vcount.ly() as usize;
@@ -391,84 +486,6 @@ impl Ppu {
 
         for x in 0..LCD_WIDTH {
             self.buffer[y * LCD_WIDTH + x] = render_line[x];
-        }
-    }
-
-    /// Render all sprites in OAM at the current line.
-    ///
-    /// Sprite prio x > BG prio x for x in [0, 3].
-    #[rustfmt::skip]
-    fn render_sprite_line(&mut self, vram: &[u8], palette_ram: &[u8]) {
-        if !self.dispcnt.obj() {
-            return;
-        }
-
-        self.current_sprite_line = [[None; 512]; 4];
-        for sprite in self.current_sprites.iter().rev() {
-            if true {
-                let y: u16 = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16);
-
-                let (pa, pb, pc, pd) = self.current_rot_scale[sprite.rot_scale_param as usize];
-                
-                for spx in 0..sprite.width() {
-                    let sprite_x = sprite.x + spx as u16;
-
-                    let lx = sprite_x - sprite.x;
-                    let ly = y - sprite.y as u16;
-
-                    let mut tx = pa * (lx as i16 - (sprite.width() as i16 / 2)) + pb * (ly as i16 - (sprite.height() as i16 / 2));
-                    let mut ty = pc * (lx as i16 - (sprite.width() as i16 / 2)) + pd * (ly as i16 - (sprite.height() as i16 / 2));
-
-                    tx >>= 8;
-                    ty >>= 8;
-
-                    let tw = if sprite.h_flip {
-                        (sprite.width() as u16 / 8) - (tx as u16 / 8) - 1
-                    } else {
-                        tx as u16 / 8
-                    };
-
-                    let tile_id = sprite.tile_id 
-                        + tw as u16 * (sprite.bpp as u16 + 1)
-                        + if self.dispcnt.obj_char_vram_map() {
-                            match sprite.v_flip {
-                                true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * (sprite.width() as u16 / 8),
-                                false => y / 8 * (sprite.width() as u16 / 8)
-                            }
-                        } else {
-                            match sprite.v_flip {
-                                true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * 0x20,
-                                false => y / 8 * 0x20
-                            }
-                        };
-
-                    let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 } 
-                        + (tile_id as usize % 1024) * 32;
-
-                    let screen_x = sprite_x as usize % 512;
-                    let tile_off = if sprite.v_flip { 7 - (ty as u16 % 8) } else { ty as u16 % 8 } 
-                        * 8 + if sprite.h_flip { 7 - (tx as u16 % 8) } else { tx as u16 % 8 };
-
-                    let (px_idx, px) = if !sprite.bpp {
-                        let px_idx = (vram[tile_addr as usize + tile_off as usize / 2] >> ((tile_off & 1) * 4)) & 0xF;
-                        (px_idx, u16::from_be_bytes([
-                            palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2 + 1],
-                            palette_ram[0x200 + (sprite.pal_idx as usize * 0x20) | px_idx as usize * 2],
-                        ]))
-                    } else {
-                        let px_idx = vram[tile_addr as usize + tile_off as usize];
-                        (px_idx, u16::from_be_bytes([
-                            palette_ram[0x200 + px_idx as usize * 2 + 1],
-                            palette_ram[0x200 + px_idx as usize * 2],
-                        ]))
-                    };
-
-                    if px_idx != 0 {
-                        self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
-                    }
-                }
-
-            }// TODO: rot/scale later
         }
     }
 

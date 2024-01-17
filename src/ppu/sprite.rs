@@ -52,7 +52,12 @@ impl Sprite {
             // Treat y as signed with [-127, 128].
             // Won't fully work for affine double sprite size.
             let mut signed_start = sprite.y as i8;
-            let signed_end = (signed_start as i16 + sprite.height() as i16) as i8;
+
+            // Double sprite size for LY check to include the lower half of double size sprites.
+            let sprite_height =
+                sprite.height() << (sprite.rot_scale && sprite.double_or_disable) as u8;
+
+            let signed_end = (signed_start as i16 + sprite_height as i16) as i8;
             let wrapped_ly = ly as i8 as i16;
 
             // TODO: simplify wrapped range check!
@@ -79,13 +84,12 @@ impl Sprite {
         let mut params = Vec::new();
 
         for i in 0..32 {
-            let x = (0..4).map(|p| {
-                let oam_idx = 6 + (i * 0x20) + (p * 8);
-                i16::from_le_bytes([
-                    oam[oam_idx as usize],
-                    oam[(oam_idx + 1) as usize],
-                ])
-            }).collect_tuple();
+            let x = (0..4)
+                .map(|p| {
+                    let oam_idx = 6 + (i * 0x20) + (p * 8);
+                    i16::from_le_bytes([oam[oam_idx as usize], oam[(oam_idx + 1) as usize]])
+                })
+                .collect_tuple();
 
             if let Some(x) = x {
                 params.push(x);
