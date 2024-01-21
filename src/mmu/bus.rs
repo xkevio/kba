@@ -8,7 +8,7 @@ use super::{
     Mcu,
 };
 
-use crate::{box_arr, ppu::lcd::Ppu};
+use crate::{bits, box_arr, ppu::lcd::Ppu, set_bits};
 
 pub struct Bus {
     /// BIOS - System ROM (needs to be provided).
@@ -86,18 +86,18 @@ impl Mcu for Bus {
             0x02 => self.wram[address as usize % 0x0004_0000],
             0x03 => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
             0x04 => match address - 0x0400_0000 {
-                addr @ 0x0000..=0x0050 => self.ppu.read8(addr),
+                addr @ 0x0000..=0x0051 => self.ppu.read8(addr),
                 addr @ 0x0100..=0x010F => self.timers.read8(addr),
                 0x0130 => self.key_input.keyinput() as u8,
                 0x0131 => (self.key_input.keyinput() >> 8) as u8,
-                0x0200 => self.ie.ie().bit_range::<0, 8>(),
-                0x0201 => self.ie.ie().bit_range::<8, 16>(),
-                0x0202 => self.iff.iff().bit_range::<0, 8>(),
-                0x0203 => self.iff.iff().bit_range::<8, 16>(),
+                0x0200 => bits!(self.ie.0, 0..=7),
+                0x0201 => bits!(self.ie.0, 8..=15),
+                0x0202 => bits!(self.iff.0, 0..=7),
+                0x0203 => bits!(self.iff.0, 8..=15),
                 0x0208 => self.ime.enabled() as u8,
-                0x0209 => self.ime.ime().bit_range::<8, 16>(),
-                0x020A => self.ime.ime().bit_range::<16, 24>(),
-                0x020B => self.ime.ime().bit_range::<24, 32>(),
+                0x0209 => bits!(self.ime.0, 0..=7),
+                0x020A => bits!(self.ime.0, 8..=15),
+                0x020B => bits!(self.ime.0, 24..=31),
                 _ => 0x00,
             },
             0x05 => self.palette_ram[address as usize % 0x400],
@@ -117,14 +117,14 @@ impl Mcu for Bus {
             0x04 => match address - 0x0400_0000 {
                 addr @ (0x0000..=0x003F | 0x0050..=0x0054) => self.ppu.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
-                0x0200 => self.ie.set_ie(self.ie.0.set_bit_range::<0, 8>(value)),
-                0x0201 => self.ie.set_ie(self.ie.0.set_bit_range::<8, 16>(value)),
+                0x0200 => set_bits!(self.ie.0, 0..=7, value),
+                0x0201 => set_bits!(self.ie.0, 8..=15, value),
                 0x0202 => self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF),
                 0x0203 => self.iff.set_iff((self.iff.iff() & !((value as u16) << 8)) & 0x3FFF),
                 0x0208 => self.ime.set_enabled(value & 1 != 0),
-                0x0209 => self.ime.set_ime(self.ime.0.set_bit_range::<8, 16>(value)),
-                0x020A => self.ime.set_ime(self.ime.0.set_bit_range::<16, 24>(value)),
-                0x020B => self.ime.set_ime(self.ime.0.set_bit_range::<24, 32>(value)),
+                0x0209 => set_bits!(self.ime.0, 8..=15, value),
+                0x020A => set_bits!(self.ime.0, 16..=23, value),
+                0x020B => set_bits!(self.ime.0, 24..=31, value),
                 0x0301 => self.halt = (value >> 7) == 0,
                 _ => {}
             },
@@ -132,7 +132,7 @@ impl Mcu for Bus {
             0x06 => self.vram[address as usize % 0x0001_8000] = value,
             0x07 => self.oam[address as usize % 0x400] = value,
             0x0E..=0x0F => self.game_pak.sram[address as usize % 0x0001_0000] = value,
-            _ => {} // eprintln!("Write to ROM/unknown addr: {address:X}"),
+            _ => {self.ie.0 = 1;} // eprintln!("Write to ROM/unknown addr: {address:X}"),
         }
     }
 }

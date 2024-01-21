@@ -12,6 +12,33 @@ macro_rules! box_arr {
     };
 }
 
+/// Enables range syntax for bit ranges to properly support inclusive end values.
+/// 
+/// - `bits!(x, 0..3)` gives bits starting from bit `0` up to bit `3` (exclusive). 
+/// - `bits!(x, 0..=3)` gives bits starting from bit `0` up to bit `3` (inclusive). 
+#[macro_export]
+macro_rules! bits {
+    ($val:expr, $start:literal..$end:literal) => {
+        $val.bit_range::<$start, $end>()
+    };
+    ($val:expr, $start:literal..=$end:literal) => {
+        $val.bit_range::<$start, { $end + 1 }>()
+    };
+}
+
+/// Enables range syntax for setting bit ranges to properly support inclusive end values.
+/// 
+/// See `bits!` for range syntax.
+#[macro_export]
+macro_rules! set_bits {
+    ($val:expr, $start:literal..$end:literal, $new_val:expr) => {
+        $val = $val.set_bit_range::<$start, $end>($new_val)
+    };
+    ($val:expr, $start:literal..=$end:literal, $new_val:expr) => {
+        $val = $val.set_bit_range::<$start, { $end + 1 }>($new_val)
+    };
+}
+
 pub trait Mcu {
     fn read32(&mut self, address: u32) -> u32 {
         u32::from_le_bytes([

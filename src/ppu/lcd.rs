@@ -4,8 +4,7 @@ use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
-    gba::{LCD_HEIGHT, LCD_WIDTH},
-    mmu::{irq::IF, Mcu},
+    bits, gba::{LCD_HEIGHT, LCD_WIDTH}, mmu::{irq::IF, Mcu}, set_bits
 };
 
 use super::{blend, modify_brightness, sprite::Sprite};
@@ -189,7 +188,7 @@ impl Ppu {
         // If mode >= 3, we render directly into `self.buffer`
         // and don't use the line draw function.
         if self.dispcnt.bg_mode() < 3 {
-            self.draw_line();
+            self.draw_line(palette_ram);
         }
     }
 
@@ -411,28 +410,34 @@ impl Ppu {
                     continue;
                 }
 
-                let tw = if sprite.h_flip && !sprite.rot_scale {
+                // Operate in "tile space".
+                let tile_width = if sprite.h_flip && !sprite.rot_scale {
                     (sprite.width() as u16 / 8) - (tx as u16 / 8) - 1
                 } else {
                     tx as u16 / 8
                 };
 
+                // Mapping modes for OAM tiles: two dimensional and one dimensional.
+                // Two dimensional: upper row 0x00-0x1F, next row offset by 0x20.
+                // One dimensional: upper row 0x00-0x1F, next row goes on normally.
+                let vram_mapping_constant = if self.dispcnt.obj_char_vram_map() {
+                    sprite.width() as u16 / 8
+                } else {
+                    0x20
+                };
+
                 let tile_id = sprite.tile_id
-                    + tw as u16 * (sprite.bpp as u16 + 1)
-                    + if self.dispcnt.obj_char_vram_map() {
-                        match sprite.v_flip && !sprite.rot_scale {
-                            true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * (sprite.width() as u16 / 8),
-                            false => ty as u16 / 8 * (sprite.width() as u16 / 8)
-                        }
-                    } else {
-                        match sprite.v_flip && !sprite.rot_scale {
-                            true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * 0x20,
-                            false => ty as u16 / 8 * 0x20
-                        }
+                    + tile_width as u16 * (sprite.bpp as u16 + 1)
+                    + match sprite.v_flip && !sprite.rot_scale {
+                        true => ((sprite.height() as u16 / 8) - (ty as u16 / 8) - 1) * vram_mapping_constant,
+                        false => ty as u16 / 8 * vram_mapping_constant
                     };
 
-                let tile_addr = if self.dispcnt.bg_mode() < 3 { 0x10000 } else { 0x14000 }
-                    + (tile_id as usize % 1024) * 32;
+                // In modes 3-5, only tile numbers 512-1023 may be used, lower memory is used for background.
+                let tile_addr = match self.dispcnt.bg_mode() < 3 {
+                    true => 0x10000 + (tile_id as usize % 1024) * 32,
+                    false => 0x14000 + (tile_id as usize % 1024) * 32,
+                };
 
                 let screen_x = spx_off as usize % 512;
                 let tile_off = if sprite.v_flip && !sprite.rot_scale { 7 - (ty as u16 % 8) } else { ty as u16 % 8 }
@@ -460,25 +465,25 @@ impl Ppu {
     }
 
     /// Draw the background scanline and sprites by placing it into the buffer. (For mode 0, 1, 2).
-    fn draw_line(&mut self) {
+    fn draw_line(&mut self, palette_ram: &[u8]) {
         let y = self.vcount.ly() as usize;
 
-        // Get bits 8..=11 (const `END` parameter has to be one past) to get bg-enable bits.
-        let is_bg_enabled: u8 = self.dispcnt.0.bit_range::<8, 12>();
+        // Get bits 8..=11 to get bg-enable bits.
+        let is_bg_enabled: u8 = bits!(self.dispcnt.0, 8..=11);
         let mut bg_sorted = [0, 1, 2, 3];
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
 
         let mut render_line = vec![None; 512];
-        self.apply_color_effects();
+        self.apply_color_effects(palette_ram);
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
         for prio in bg_sorted {
             for x in 0..512 {
+                let sp = self.current_sprite_line[prio][x];
                 let bg = (is_bg_enabled & (1 << prio) != 0)
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
-                let sp = self.current_sprite_line[prio][x];
 
                 render_line[x] = render_line[x].or(sp.or(bg));
             }
@@ -490,21 +495,27 @@ impl Ppu {
     }
 
     // TODO: no obj to obj! and layer cannot blend with itself
-    fn apply_color_effects(&mut self) {
-        let src: u8 = self.bldcnt.0.bit_range::<0, 5>();
-        let dst: u8 = self.bldcnt.0.bit_range::<8, 13>();
+    fn apply_color_effects(&mut self, palette_ram: &[u8]) {
+        let src: u8 = bits!(self.bldcnt.0, 0..=5);
+        let dst: u8 = bits!(self.bldcnt.0, 8..=13);
+
+        // println!("{:0b}", self.bldcnt.0);
 
         let src_idx = src.trailing_zeros() as usize;
-        let dests = (0..4)
+        let dests = (0..5)
             .filter(|i| dst & 1 << i != 0)
             .sorted_by_key(|i| self.bgxcnt[*i].prio())
             .collect::<Vec<_>>();
+
+        // dbg!(src_idx);
+        // dbg!(&dests);
 
         // TODO: check that first dest layer is visible beneath src_idx (prio)
         let src_line = match src.trailing_zeros() {
             bg @ 0..=3 => self.current_bg_line[bg as usize],
             4 => self.current_sprite_line[0],
-            _ => return, // todo: backdrop (color 0 of pal 0)
+            5 => [Some(u16::from_le_bytes([palette_ram[0], palette_ram[1]])); 512],
+            _ => return,
         };
 
         // TODO: add obj layer to dest
@@ -588,19 +599,19 @@ impl Mcu for Ppu {
             0x0024 => self.bgxpc[0] = value as i16,
             0x0026 => self.bgxpd[0] = value as i16,
             0x0028 => {
-                self.bgxx[0] = self.bgxx[0].set_bit_range::<0, 16>(value);
+                set_bits!(self.bgxx[0], 0..=15, value);
                 self.internal_ref_xx[0] = self.bgxx[0];
             }
             0x002A => {
-                self.bgxx[0] = self.bgxx[0].set_bit_range::<16, 28>(value & 0xFFF);
+                set_bits!(self.bgxx[0], 16..=27, value & 0xFFF);
                 self.internal_ref_xx[0] = self.bgxx[0];
             }
             0x002C => {
-                self.bgxy[0] = self.bgxy[0].set_bit_range::<0, 16>(value);
+                set_bits!(self.bgxy[0], 0..=15, value);
                 self.internal_ref_xy[0] = self.bgxy[0];
             }
             0x002E => {
-                self.bgxy[0] = self.bgxy[0].set_bit_range::<16, 28>(value & 0xFFF);
+                set_bits!(self.bgxy[0], 16..=27, value & 0xFFF);
                 self.internal_ref_xy[0] = self.bgxy[0];
             }
             0x0030 => self.bgxpa[1] = value as i16,
@@ -608,19 +619,19 @@ impl Mcu for Ppu {
             0x0034 => self.bgxpc[1] = value as i16,
             0x0036 => self.bgxpd[1] = value as i16,
             0x0038 => {
-                self.bgxx[1] = self.bgxx[1].set_bit_range::<0, 16>(value);
+                set_bits!(self.bgxx[1], 0..=15, value);
                 self.internal_ref_xx[1] = self.bgxx[1];
             }
             0x003A => {
-                self.bgxx[1] = self.bgxx[1].set_bit_range::<16, 28>(value & 0xFFF);
+                set_bits!(self.bgxx[1], 16..=27, value & 0xFFF);
                 self.internal_ref_xx[1] = self.bgxx[1];
             }
             0x003C => {
-                self.bgxy[1] = self.bgxy[1].set_bit_range::<0, 16>(value);
+                set_bits!(self.bgxy[1], 0..=15, value);
                 self.internal_ref_xy[1] = self.bgxy[1];
             }
             0x003E => {
-                self.bgxy[1] = self.bgxy[1].set_bit_range::<16, 28>(value & 0xFFF);
+                set_bits!(self.bgxy[1], 16..=27, value & 0xFFF);
                 self.internal_ref_xy[1] = self.bgxy[1];
             }
             0x0050 => self.bldcnt.set_bldcnt(value),
