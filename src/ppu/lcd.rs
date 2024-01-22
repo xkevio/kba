@@ -497,7 +497,7 @@ impl Ppu {
         }
     }
 
-    // TODO: no obj to obj! and layer cannot blend with itself
+    // TODO: https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
     fn special_color_effect(&mut self, palette_ram: &[u8]) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
