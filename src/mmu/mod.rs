@@ -13,9 +13,9 @@ macro_rules! box_arr {
 }
 
 /// Enables range syntax for bit ranges to properly support inclusive end values.
-/// 
-/// - `bits!(x, 0..3)` gives bits starting from bit `0` up to bit `3` (exclusive). 
-/// - `bits!(x, 0..=3)` gives bits starting from bit `0` up to bit `3` (inclusive). 
+///
+/// - `bits!(x, 0..3)` gives bits starting from bit `0` up to bit `3` (exclusive).
+/// - `bits!(x, 0..=3)` gives bits starting from bit `0` up to bit `3` (inclusive).
 #[macro_export]
 macro_rules! bits {
     ($val:expr, $start:literal..$end:literal) => {
@@ -27,7 +27,7 @@ macro_rules! bits {
 }
 
 /// Enables range syntax for setting bit ranges to properly support inclusive end values.
-/// 
+///
 /// See `bits!` for range syntax.
 #[macro_export]
 macro_rules! set_bits {

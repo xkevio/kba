@@ -4,7 +4,10 @@ use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
-    bits, gba::{LCD_HEIGHT, LCD_WIDTH}, mmu::{irq::IF, Mcu}, set_bits
+    bits,
+    gba::{LCD_HEIGHT, LCD_WIDTH},
+    mmu::{irq::IF, Mcu},
+    set_bits,
 };
 
 use super::{blend, modify_brightness, sprite::Sprite};
@@ -474,7 +477,7 @@ impl Ppu {
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
 
         let mut render_line = vec![None; 512];
-        self.apply_color_effects(palette_ram);
+        self.special_color_effect(palette_ram);
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
@@ -495,62 +498,53 @@ impl Ppu {
     }
 
     // TODO: no obj to obj! and layer cannot blend with itself
-    fn apply_color_effects(&mut self, palette_ram: &[u8]) {
+    fn special_color_effect(&mut self, palette_ram: &[u8]) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
 
-        // println!("{:0b}", self.bldcnt.0);
-
-        let src_idx = src.trailing_zeros() as usize;
-        let dests = (0..5)
-            .filter(|i| dst & 1 << i != 0)
+        let dst_layers = (0..=5)
+            .filter(|i| dst & (1 << i) != 0)
             .sorted_by_key(|i| self.bgxcnt[*i].prio())
             .collect::<Vec<_>>();
 
-        // dbg!(src_idx);
-        // dbg!(&dests);
+        for src_layer_idx in 0..=5 {
+            if src & (1 << src_layer_idx) != 0 {
+                let src_layer = match src_layer_idx {
+                    bg @ 0..=3 => self.current_bg_line[bg as usize],
+                    4 => self.current_sprite_line[0], // TODO
+                    5 => [Some(u16::from_le_bytes([palette_ram[0], palette_ram[1]])); 512],
+                    _ => unreachable!(),
+                };
 
-        // TODO: check that first dest layer is visible beneath src_idx (prio)
-        let src_line = match src.trailing_zeros() {
-            bg @ 0..=3 => self.current_bg_line[bg as usize],
-            4 => self.current_sprite_line[0],
-            5 => [Some(u16::from_le_bytes([palette_ram[0], palette_ram[1]])); 512],
-            _ => return,
-        };
+                let Ok(color_effect) = self.bldcnt.color_effect() else {
+                    panic!("whoops")
+                };
 
-        // TODO: add obj layer to dest
-        let dst_line = dests.iter().fold(vec![None; 512], |acc, e| {
-            acc.iter()
-                .enumerate()
-                .map(|(idx, a)| a.or(self.current_bg_line[*e][idx]))
-                .collect_vec()
-        });
+                let result = match color_effect {
+                    ColorEffect::AlphaBlending => {
+                        for dst_layer_idx in &dst_layers {
+                            if src_layer_idx == *dst_layer_idx {
+                                continue;
+                            }
 
-        if let Ok(c) = self.bldcnt.color_effect() {
-            match c {
-                ColorEffect::AlphaBlending => {
-                    let mut apply_line = Vec::with_capacity(512);
+                            // Backgrounds.
+                            if src_layer_idx <= 3 && *dst_layer_idx <= 3 {
+                                if self.bgxcnt[src_layer_idx].prio() < self.bgxcnt[*dst_layer_idx].prio() {
 
-                    for (s, d) in src_line.iter().zip(dst_line) {
-                        if let (Some(s), Some(d)) = (s, d) {
-                            let blend_px = blend(*s, d, self.bldalpha.eva(), self.bldalpha.evb());
-                            apply_line.push(Some(blend_px));
-                        } else {
-                            apply_line.push(*s);
+                                }
+                            }
                         }
-                    }
 
-                    self.current_bg_line[src_idx].copy_from_slice(&apply_line);
-                }
-                ColorEffect::BrightnessIncrease => {
-                    self.current_bg_line[src_idx] = self.current_bg_line[src_idx]
-                        .map(|s| s.map(|px| modify_brightness::<true>(px, self.bldy.evy())));
-                }
-                ColorEffect::BrightnessDecrease => {
-                    self.current_bg_line[src_idx] = self.current_bg_line[src_idx]
-                        .map(|s| s.map(|px| modify_brightness::<false>(px, self.bldy.evy())));
-                }
-                ColorEffect::None => {}
+                        todo!()
+                    },
+                    ColorEffect::BrightnessIncrease => {
+                        src_layer.map(|s| s.map(|px| modify_brightness::<true>(px, self.bldy.evy())))
+                    },
+                    ColorEffect::BrightnessDecrease => {
+                        src_layer.map(|s| s.map(|px| modify_brightness::<false>(px, self.bldy.evy())))
+                    },
+                    ColorEffect::None => src_layer,
+                };
             }
         }
     }
