@@ -497,54 +497,61 @@ impl Ppu {
         }
     }
 
-    // TODO: https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
-    fn special_color_effect(&mut self, palette_ram: &[u8]) {
+    // https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
+    // TODO: Obj blending.
+    fn special_color_effect(&mut self, _palette_ram: &[u8]) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
 
-        let dst_layers = (0..=5)
-            .filter(|i| dst & (1 << i) != 0)
-            .sorted_by_key(|i| self.bgxcnt[*i].prio())
-            .collect::<Vec<_>>();
+        let enabled_bgs: u8 = bits!(self.dispcnt.0, 8..=11);
+        let Ok(color_effect) = self.bldcnt.color_effect() else { return };
 
-        for src_layer_idx in 0..=5 {
-            if src & (1 << src_layer_idx) != 0 {
-                let src_layer = match src_layer_idx {
-                    bg @ 0..=3 => self.current_bg_line[bg as usize],
-                    4 => self.current_sprite_line[0], // TODO
-                    5 => [Some(u16::from_le_bytes([palette_ram[0], palette_ram[1]])); 512],
-                    _ => unreachable!(),
-                };
+        for x in 0..512 {
+            // Top two layers (pixel, prio, bg).
+            let mut layers = (
+                [0u16; 2], [255u8; 2], [0usize; 2]
+            );
 
-                let Ok(color_effect) = self.bldcnt.color_effect() else {
-                    panic!("whoops")
-                };
+            for bg in (0..4).filter(|b| enabled_bgs & (1 << b) != 0) {
+                if let Some(px) = self.current_bg_line[bg][x] {
+                    if self.bgxcnt[bg].prio() < layers.1[0] {
+                        // Swap top and bottom layer.
+                        layers.0[1] = layers.0[0];
+                        layers.1[1] = layers.1[0];
+                        layers.2[1] = layers.2[0];
+                        // Replace top layer with this new background.
+                        layers.0[0] = px;
+                        layers.1[0] = self.bgxcnt[bg].prio();
+                        layers.2[0] = bg;
+                    } else if self.bgxcnt[bg].prio() < layers.1[1] {
+                        layers.0[1] = px;
+                        layers.1[1] = self.bgxcnt[bg].prio();
+                        layers.2[1] = bg;
+                    }
+                }
+            }
 
-                let result = match color_effect {
-                    ColorEffect::AlphaBlending => {
-                        for dst_layer_idx in &dst_layers {
-                            if src_layer_idx == *dst_layer_idx {
-                                continue;
-                            }
+            match color_effect {
+                ColorEffect::AlphaBlending => {
+                    if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
+                        layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
+                    }
+                },
+                ColorEffect::BrightnessIncrease => {
+                    if src & (1 << layers.2[0]) != 0 {
+                        layers.0[0] = modify_brightness::<true>(layers.0[0], self.bldy.evy());
+                    }
+                },
+                ColorEffect::BrightnessDecrease => {
+                    if src & (1 << layers.2[0]) != 0 {
+                        layers.0[0] = modify_brightness::<false>(layers.0[0], self.bldy.evy());
+                    }
+                },
+                ColorEffect::None => return,
+            }
 
-                            // Backgrounds.
-                            if src_layer_idx <= 3 && *dst_layer_idx <= 3 {
-                                if self.bgxcnt[src_layer_idx].prio() < self.bgxcnt[*dst_layer_idx].prio() {
-
-                                }
-                            }
-                        }
-
-                        todo!()
-                    },
-                    ColorEffect::BrightnessIncrease => {
-                        src_layer.map(|s| s.map(|px| modify_brightness::<true>(px, self.bldy.evy())))
-                    },
-                    ColorEffect::BrightnessDecrease => {
-                        src_layer.map(|s| s.map(|px| modify_brightness::<false>(px, self.bldy.evy())))
-                    },
-                    ColorEffect::None => src_layer,
-                };
+            if self.current_bg_line[layers.2[0]][x].is_some() {
+                self.current_bg_line[layers.2[0]][x] = Some(layers.0[0]);
             }
         }
     }
