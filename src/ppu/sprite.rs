@@ -23,7 +23,7 @@ pub struct Sprite {
     pub pal_idx: u8,
 }
 
-#[derive(ConvRaw)]
+#[derive(ConvRaw, PartialEq)]
 pub enum ObjMode {
     Normal,
     SemiTransparent,

@@ -1,5 +1,4 @@
 use derivative::Derivative;
-use itertools::Itertools;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
@@ -10,7 +9,7 @@ use crate::{
     set_bits,
 };
 
-use super::{blend, modify_brightness, sprite::Sprite};
+use super::{blend, modify_brightness, sprite::{ObjMode, Sprite}};
 
 const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
@@ -51,9 +50,9 @@ pub struct Ppu {
     /// Current to-be-drawn line from the backgrounds, one for each prio.
     #[derivative(Default(value = "[[None; 512]; 4]"))]
     current_bg_line: [[Option<u16>; 512]; 4],
-    /// Current to-be-drawn line for sprites, one for each prio.
-    #[derivative(Default(value = "[[None; 512]; 4]"))]
-    current_sprite_line: [[Option<u16>; 512]; 4],
+    /// Current to-be-drawn line for sprites.
+    #[derivative(Default(value = "[Obj::default(); 512]"))]
+    current_sprite_line: [Obj; 512],
 
     /// Up to 128 sprites from OAM for the current LY.
     current_sprites: Vec<Sprite>,
@@ -82,6 +81,13 @@ pub enum ColorEffect {
     AlphaBlending,
     BrightnessIncrease,
     BrightnessDecrease,
+}
+
+#[derive(Default, Clone, Copy)]
+struct Obj {
+    px: Option<u16>,
+    prio: u8,
+    alpha: bool,
 }
 
 impl Ppu {
@@ -375,7 +381,7 @@ impl Ppu {
             return;
         }
 
-        self.current_sprite_line = [[None; 512]; 4];
+        self.current_sprite_line = [Obj::default(); 512];
         for sprite in self.current_sprites.iter().rev() {
             if !sprite.rot_scale && sprite.double_or_disable {
                 continue;
@@ -461,7 +467,7 @@ impl Ppu {
                 };
 
                 if px_idx != 0 {
-                    self.current_sprite_line[sprite.prio as usize][screen_x] = Some(px);
+                    self.current_sprite_line[screen_x] = Obj { px: Some(px), prio: sprite.prio, alpha: sprite.obj_mode == ObjMode::SemiTransparent };
                 }
             }
         }
@@ -483,7 +489,9 @@ impl Ppu {
         // Draw all the sprite layers on top of the backgrounds.
         for prio in bg_sorted {
             for x in 0..512 {
-                let sp = self.current_sprite_line[prio][x];
+                let sp = (self.current_sprite_line[x].prio == prio as u8)
+                    .then_some(self.current_sprite_line[x].px)
+                    .flatten();
                 let bg = (is_bg_enabled & (1 << prio) != 0)
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
@@ -497,8 +505,9 @@ impl Ppu {
         }
     }
 
-    // https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
-    // TODO: Obj blending.
+    /// Apply special color effects such as alpha blending, whitening or darkening.
+    /// 
+    /// "Inspired" by https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
     fn special_color_effect(&mut self, _palette_ram: &[u8]) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
@@ -507,10 +516,34 @@ impl Ppu {
         let Ok(color_effect) = self.bldcnt.color_effect() else { return };
 
         for x in 0..512 {
-            // Top two layers (pixel, prio, bg).
+            // Top two layers (pixel, prio, bg, obj_alpha).
             let mut layers = (
-                [0u16; 2], [255u8; 2], [0usize; 2]
+                [0u16; 2], [4u8; 2], [0usize; 2], false
             );
+
+            if self.dispcnt.obj() {
+                if let Some(px) = self.current_sprite_line[x].px {
+                    let obj_layer = 4;
+                    let prio = self.current_sprite_line[x].prio;
+                    let obj_alpha = self.current_sprite_line[x].alpha;
+
+                    if prio < layers.1[0] {
+                        // Swap top and bottom layer.
+                        layers.0[1] = layers.0[0];
+                        layers.1[1] = layers.1[0];
+                        layers.2[1] = layers.2[0];
+                        // Replace top layer with this new background.
+                        layers.0[0] = px;
+                        layers.1[0] = prio;
+                        layers.2[0] = obj_layer;
+                        layers.3 = obj_alpha;
+                    } else if prio < layers.1[1] {
+                        layers.0[1] = px;
+                        layers.1[1] = prio;
+                        layers.2[1] = obj_layer;
+                    }
+                }
+            }
 
             for bg in (0..4).filter(|b| enabled_bgs & (1 << b) != 0) {
                 if let Some(px) = self.current_bg_line[bg][x] {
@@ -523,6 +556,7 @@ impl Ppu {
                         layers.0[0] = px;
                         layers.1[0] = self.bgxcnt[bg].prio();
                         layers.2[0] = bg;
+                        layers.3 = false;
                     } else if self.bgxcnt[bg].prio() < layers.1[1] {
                         layers.0[1] = px;
                         layers.1[1] = self.bgxcnt[bg].prio();
@@ -531,28 +565,36 @@ impl Ppu {
                 }
             }
 
-            match color_effect {
-                ColorEffect::AlphaBlending => {
-                    if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
-                        layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
-                    }
-                },
-                ColorEffect::BrightnessIncrease => {
-                    if src & (1 << layers.2[0]) != 0 {
-                        layers.0[0] = modify_brightness::<true>(layers.0[0], self.bldy.evy());
-                    }
-                },
-                ColorEffect::BrightnessDecrease => {
-                    if src & (1 << layers.2[0]) != 0 {
-                        layers.0[0] = modify_brightness::<false>(layers.0[0], self.bldy.evy());
-                    }
-                },
-                ColorEffect::None => return,
+            // Obj Alpha.
+            if layers.3 {
+                if dst & (1 << layers.2[1]) != 0 {
+                    layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
+                }
+                self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]); 
+            } else {
+                match color_effect {
+                    ColorEffect::AlphaBlending => {
+                        if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
+                            layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
+                        }
+                    },
+                    ColorEffect::BrightnessIncrease => {
+                        if src & (1 << layers.2[0]) != 0 {
+                            layers.0[0] = modify_brightness::<true>(layers.0[0], self.bldy.evy());
+                        }
+                    },
+                    ColorEffect::BrightnessDecrease => {
+                        if src & (1 << layers.2[0]) != 0 {
+                            layers.0[0] = modify_brightness::<false>(layers.0[0], self.bldy.evy());
+                        }
+                    },
+                    ColorEffect::None => return,
+                }
+
+                let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
+                self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
             }
 
-            if self.current_bg_line[layers.2[0]][x].is_some() {
-                self.current_bg_line[layers.2[0]][x] = Some(layers.0[0]);
-            }
         }
     }
 }
