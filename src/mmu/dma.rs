@@ -159,7 +159,7 @@ impl From<DMA> for u16 {
     }
 }
 
-#[derive(ConvRaw, Default, Clone, Copy, PartialEq)]
+#[derive(ConvRaw, Default, Clone, Copy, PartialEq, Debug)]
 pub enum AddrControl {
     #[default]
     Increment,

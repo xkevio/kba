@@ -89,6 +89,8 @@ impl Bus {
             let dst_addr_control = channels[ch].dst_addr_ctrl;
             let start_timing = channels[ch].start_timing;
 
+            let addr_delta = if channels[ch].transfer_type { 4 } else { 2 };
+
             let mut src_addr = channels[ch].src;
             let mut dst_addr = channels[ch].dst;
             let word_count = match channels[ch].word_count == 0 {
@@ -114,19 +116,19 @@ impl Bus {
                         }
 
                         src_addr = match src_addr_control {
-                            AddrControl::Increment => src_addr + 1,
-                            AddrControl::Decrement => src_addr - 1,
+                            AddrControl::Increment => src_addr + addr_delta,
+                            AddrControl::Decrement => src_addr - addr_delta,
                             _ => src_addr,
                         };
 
                         dst_addr = match dst_addr_control {
-                            AddrControl::Increment | AddrControl::IncReload => dst_addr + 1,
-                            AddrControl::Decrement => dst_addr - 1,
+                            AddrControl::Increment | AddrControl::IncReload => dst_addr + addr_delta,
+                            AddrControl::Decrement => dst_addr - addr_delta,
                             AddrControl::Fixed => dst_addr,
                         };
                     }
 
-                    if !channels[ch].repeat {
+                    if !channels[ch].repeat || start_timing == StartTiming::Immediate {
                         self.dma_channels[ch].enable = false;
                     }
 
