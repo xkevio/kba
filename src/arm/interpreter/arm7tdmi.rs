@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    arm::arr_with,
-    fl,
-    mmu::{bus::Bus, game_pak::GamePak, Mcu},
+    arm::arr_with, box_arr, fl, mmu::{bus::Bus, game_pak::GamePak, Mcu}
 };
 use proc_bitfield::{bitfield, ConvRaw};
 
@@ -101,10 +99,14 @@ impl Arm7TDMI {
     pub fn new(rom: &[u8]) -> Self {
         let mut regs = [0; 16];
 
+        // Resize ROM to 32 MB always for OOB reads.
+        let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];
+        rom_arr[0..(rom.len())].copy_from_slice(rom); 
+
         // Initialize GamePak memory.
         let bus = Bus {
             game_pak: GamePak {
-                rom: rom.to_vec(),
+                rom: rom_arr,
                 sram: vec![0; 0x10000],
             },
             ..Default::default()

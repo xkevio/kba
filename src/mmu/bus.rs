@@ -78,7 +78,7 @@ impl Bus {
             &mut self.iff
         );
         self.timers.tick(&mut self.iff, cycles);
-        self.dma_transfer();
+        self.dma_transfer(); // TODO: Optimize! Only call on state change.
     }
 
     fn dma_transfer(&mut self) {
@@ -171,8 +171,9 @@ impl Mcu for Bus {
             0x05 => self.palette_ram[address as usize % 0x400],
             0x06 => self.vram[address as usize % 0x0001_8000],
             0x07 => self.oam[address as usize % 0x400],
-            0x08..=0x0D => self.game_pak.rom[address as usize - 0x0800_0000],
+            0x08..=0x0D => self.game_pak.rom[address as usize & 0x00FF_FFFF],
             0x0E..=0x0F => {
+                // Flash ID workaround.
                 if address == 0x0E00_0000 {
                     0x62
                 } else if address == 0x0E00_0001 {
