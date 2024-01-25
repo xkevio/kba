@@ -350,12 +350,13 @@ impl Ppu {
                     continue;
                 }
             } else {
-                tx %= screen_size;
-                ty %= screen_size;
+                tx = tx.rem_euclid(screen_size);
+                ty = ty.rem_euclid(screen_size);
             }
 
+            // Why was this `2 * ...` here before?
             let map_data = bg_cnt.screen_base_block() as u32 * 0x800
-                + 2 * (32 * (ty as u32 / 8) + (tx as u32 / 8));
+                + 1 * ((screen_size as u32 / 8) * (ty as u32 / 8) + (tx as u32 / 8));
 
             let tile_id = vram[map_data as usize];
             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * 64;
@@ -436,7 +437,7 @@ impl Ppu {
                 // Two dimensional: upper row 0x00-0x1F, next row offset by 0x20.
                 // One dimensional: upper row 0x00-0x1F, next row goes on normally.
                 let vram_mapping_constant = if self.dispcnt.obj_char_vram_map() {
-                    sprite.width() as u16 / 8
+                    sprite.width() as u16 / 8 * (sprite.bpp as u16 + 1)
                 } else {
                     0x20
                 };
