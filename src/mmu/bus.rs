@@ -1,7 +1,7 @@
 use proc_bitfield::{bitfield, BitRange};
 
 use super::{
-    dma::DMAChannels,
+    dma::{AddrControl, DMAChannels, StartTiming},
     game_pak::GamePak,
     irq::{IE, IF, IME},
     timer::Timers,
@@ -71,10 +71,75 @@ impl Default for Bus {
 
 impl Bus {
     pub fn tick(&mut self, cycles: usize) {
-        // TODO: APU, DMA, etc.
-        self.ppu
-            .cycle(&*self.vram, &self.palette_ram, &self.oam, &mut self.iff);
+        self.ppu.cycle(
+            &*self.vram, 
+            &self.palette_ram, 
+            &self.oam, 
+            &mut self.iff
+        );
         self.timers.tick(&mut self.iff, cycles);
+        self.dma_transfer();
+    }
+
+    fn dma_transfer(&mut self) {
+        let channels = self.dma_channels;
+
+        for ch in 0..4 {
+            let src_addr_control = channels[ch].src_addr_ctrl;
+            let dst_addr_control = channels[ch].dst_addr_ctrl;
+            let start_timing = channels[ch].start_timing;
+
+            let mut src_addr = channels[ch].src;
+            let mut dst_addr = channels[ch].dst;
+            let word_count = match channels[ch].word_count == 0 {
+                true if ch == 3 => 0xFFFF,
+                true => 0x3FFF,
+                false => channels[ch].word_count,
+            };
+
+            // TODO: Special start (Video Capture) timing and wow, this would be nicer with a scheduler.
+            if channels[ch].enable {
+                if start_timing == StartTiming::Immediate
+                    || start_timing == StartTiming::HBlank && self.ppu.dispstat.hblank()
+                    || start_timing == StartTiming::VBlank && self.ppu.dispstat.vblank()
+                    // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
+                {
+                    for _ in 0..word_count {
+                        if channels[ch].transfer_type {
+                            let data = self.read32(src_addr);
+                            self.write32(dst_addr, data);
+                        } else {
+                            let data = self.read16(src_addr);
+                            self.write16(dst_addr, data);
+                        }
+
+                        src_addr = match src_addr_control {
+                            AddrControl::Increment => src_addr + 1,
+                            AddrControl::Decrement => src_addr - 1,
+                            _ => src_addr,
+                        };
+
+                        dst_addr = match dst_addr_control {
+                            AddrControl::Increment | AddrControl::IncReload => dst_addr + 1,
+                            AddrControl::Decrement => dst_addr - 1,
+                            AddrControl::Fixed => dst_addr,
+                        };
+                    }
+
+                    if !channels[ch].repeat {
+                        self.dma_channels[ch].enable = false;
+                    }
+
+                    if channels[ch].dma_irq {
+                        self.iff.set_dma(ch);
+                    }
+
+                    self.ppu.vid_capture = false;
+                    self.dma_channels[ch].src = src_addr;
+                    self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
+                }
+            }
+        }
     }
 }
 
@@ -87,6 +152,7 @@ impl Mcu for Bus {
             0x03 => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
             0x04 => match address - 0x0400_0000 {
                 addr @ 0x0000..=0x0051 => self.ppu.read8(addr),
+                addr @ 0x00B0..=0x00DF => self.dma_channels.read8(addr),
                 addr @ 0x0100..=0x010F => self.timers.read8(addr),
                 0x0130 => self.key_input.keyinput() as u8,
                 0x0131 => (self.key_input.keyinput() >> 8) as u8,
@@ -104,7 +170,15 @@ impl Mcu for Bus {
             0x06 => self.vram[address as usize % 0x0001_8000],
             0x07 => self.oam[address as usize % 0x400],
             0x08..=0x0D => self.game_pak.rom[address as usize - 0x0800_0000],
-            0x0E..=0x0F => self.game_pak.sram[address as usize % 0x0001_0000],
+            0x0E..=0x0F => {
+                if address == 0x0E00_0000 {
+                    0x62
+                } else if address == 0x0E00_0001 {
+                    0x13
+                } else {
+                    self.game_pak.sram[address as usize % 0x0001_0000]   
+                }
+            }
             _ => 0,
         }
     }
@@ -116,6 +190,7 @@ impl Mcu for Bus {
             0x03 => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
             0x04 => match address - 0x0400_0000 {
                 addr @ (0x0000..=0x003F | 0x0050..=0x0054) => self.ppu.write8(addr, value),
+                addr @ 0x00B0..=0x00DF => self.dma_channels.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
                 0x0200 => set_bits!(self.ie.0, 0..=7, value),
                 0x0201 => set_bits!(self.ie.0, 8..=15, value),

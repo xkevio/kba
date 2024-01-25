@@ -9,7 +9,10 @@ use crate::{
     set_bits,
 };
 
-use super::{blend, modify_brightness, sprite::{ObjMode, Sprite}};
+use super::{
+    blend, modify_brightness,
+    sprite::{ObjMode, Sprite},
+};
 
 const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
@@ -63,6 +66,7 @@ pub struct Ppu {
     internal_ref_xx: [i32; 2],
     internal_ref_xy: [i32; 2],
 
+    pub vid_capture: bool,
     current_mode: Mode,
     cycle: u16,
 }
@@ -133,6 +137,7 @@ impl Ppu {
                         self.current_mode = Mode::VBlank;
                     } else {
                         self.current_mode = Mode::HDraw;
+                        self.vid_capture = true;
                     }
                 }
             }
@@ -163,6 +168,7 @@ impl Ppu {
                         self.vcount.set_ly(0); // todo: vcount irq for ly = 0
                         self.dispstat.set_vblank(false);
                         self.current_mode = Mode::HDraw;
+                        self.vid_capture = true;
                     }
                 }
             }
@@ -506,20 +512,20 @@ impl Ppu {
     }
 
     /// Apply special color effects such as alpha blending, whitening or darkening.
-    /// 
+    ///
     /// "Inspired" by https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
     fn special_color_effect(&mut self, _palette_ram: &[u8]) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
 
         let enabled_bgs: u8 = bits!(self.dispcnt.0, 8..=11);
-        let Ok(color_effect) = self.bldcnt.color_effect() else { return };
+        let Ok(color_effect) = self.bldcnt.color_effect() else {
+            return;
+        };
 
         for x in 0..512 {
             // Top two layers (pixel, prio, bg, obj_alpha).
-            let mut layers = (
-                [0u16; 2], [4u8; 2], [0usize; 2], false
-            );
+            let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
 
             if self.dispcnt.obj() {
                 if let Some(px) = self.current_sprite_line[x].px {
@@ -568,33 +574,42 @@ impl Ppu {
             // Obj Alpha.
             if layers.3 {
                 if dst & (1 << layers.2[1]) != 0 {
-                    layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
+                    layers.0[0] = blend(
+                        layers.0[0],
+                        layers.0[1],
+                        self.bldalpha.eva(),
+                        self.bldalpha.evb(),
+                    );
                 }
-                self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]); 
+                self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]);
             } else {
                 match color_effect {
                     ColorEffect::AlphaBlending => {
                         if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
-                            layers.0[0] = blend(layers.0[0], layers.0[1], self.bldalpha.eva(), self.bldalpha.evb());
+                            layers.0[0] = blend(
+                                layers.0[0],
+                                layers.0[1],
+                                self.bldalpha.eva(),
+                                self.bldalpha.evb(),
+                            );
                         }
-                    },
+                    }
                     ColorEffect::BrightnessIncrease => {
                         if src & (1 << layers.2[0]) != 0 {
                             layers.0[0] = modify_brightness::<true>(layers.0[0], self.bldy.evy());
                         }
-                    },
+                    }
                     ColorEffect::BrightnessDecrease => {
                         if src & (1 << layers.2[0]) != 0 {
                             layers.0[0] = modify_brightness::<false>(layers.0[0], self.bldy.evy());
                         }
-                    },
+                    }
                     ColorEffect::None => return,
                 }
 
                 let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
                 self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
             }
-
         }
     }
 }
