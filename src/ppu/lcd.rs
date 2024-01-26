@@ -47,6 +47,13 @@ pub struct Ppu {
     pub bldalpha: BLDALPHA,
     pub bldy: BLDY,
 
+    /// Window X horizontal and vertical dimensions.
+    pub winxh: [u16; 2],
+    pub winxv: [u16; 2],
+
+    pub winin: WININ,
+    pub winout: WINOUT,
+
     #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: Vec<Option<u16>>,
 
@@ -93,6 +100,14 @@ struct Obj {
     px: Option<u16>,
     prio: u8,
     alpha: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Window {
+    Win0,
+    Win1,
+    WinOut,
+    ObjWin,
 }
 
 impl Ppu {
@@ -517,6 +532,12 @@ impl Ppu {
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
 
+                // if self.dispcnt.win0() || self.dispcnt.win1() {
+                //     if self.in_window(x, y, prio) == Window::WinOut && self.winout.0 & (1 << prio) != 0 {
+                //         bg = None;
+                //     } 
+                // }
+
                 render_line[x] = render_line[x].or(sp.or(bg));
             }
         }
@@ -627,6 +648,31 @@ impl Ppu {
             }
         }
     }
+
+    fn in_window(&self, x: usize, y: usize, bg: usize) -> Window {
+        let mut window = Window::WinOut;
+        
+        for win in 0..2 {
+            if self.dispcnt.0 & (1 << (13 + win)) == 0 {
+                continue;
+            }
+
+            let x1 = (self.winxh[win] >> 8) as usize;
+            let x2 = (self.winxh[win] & 0xFF) as usize;
+
+            let y1 = (self.winxv[win] >> 8) as usize;
+            let y2 = (self.winxv[win] & 0xFF) as usize;
+
+            if self.winin.0 & (1 << (bg + win * 8)) != 0 {
+                if x >= x1 && x < x2 && y >= y1 && y < y2 {
+                    window = if win == 0 { Window::Win0 } else { Window::Win1 };
+                    break; 
+                }
+            }
+        }
+
+        window
+    }
 }
 
 impl Mcu for Ppu {
@@ -639,6 +685,8 @@ impl Mcu for Ppu {
             0x000A => self.bgxcnt[1].bg_control(),
             0x000C => self.bgxcnt[2].bg_control(),
             0x000E => self.bgxcnt[3].bg_control(),
+            0x0048 => self.winin.winin(),
+            0x004A => self.winout.winout(),
             0x0050 => self.bldcnt.bldcnt(),
             _ => 0,
         }
@@ -707,6 +755,12 @@ impl Mcu for Ppu {
                 set_bits!(self.bgxy[1], 16..=27, value & 0xFFF);
                 self.internal_ref_xy[1] = self.bgxy[1];
             }
+            0x0040 => self.winxh[0] = value,
+            0x0042 => self.winxh[1] = value,
+            0x0044 => self.winxv[0] = value,
+            0x0046 => self.winxv[1] = value,
+            0x0048 => self.winin.set_winin(value),
+            0x004A => self.winout.set_winout(value),
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
@@ -856,5 +910,45 @@ bitfield! {
     pub struct BLDY(pub u16) {
         pub bldy: u16 @ ..,
         pub evy: u8 @ 0..=4,
+    }
+}
+
+bitfield! {
+    /// **WININ - Control of Inside Windows** (r/w).
+    #[derive(Clone, Copy, Default)]
+    pub struct WININ(pub u16) {
+        pub winin: u16 @ ..,
+        pub win0_bg0: bool @ 0,
+        pub win0_bg1: bool @ 1,
+        pub win0_bg2: bool @ 2,
+        pub win0_bg3: bool @ 3,
+        pub win0_obj: bool @ 4,
+        pub win0_col: bool @ 5,
+        pub win1_bg0: bool @ 8,
+        pub win1_bg1: bool @ 9,
+        pub win1_bg2: bool @ 10,
+        pub win1_bg3: bool @ 11,
+        pub win1_obj: bool @ 12,
+        pub win1_col: bool @ 13,
+    }
+}
+
+bitfield! {
+    /// **WINOUT - Control of Outside Windows & Obj** (r/w).
+    #[derive(Clone, Copy, Default)]
+    pub struct WINOUT(pub u16) {
+        pub winout: u16 @ ..,
+        pub win0_bg0_out: bool @ 0,
+        pub win0_bg1_out: bool @ 1,
+        pub win0_bg2_out: bool @ 2,
+        pub win0_bg3_out: bool @ 3,
+        pub win0_obj_out: bool @ 4,
+        pub win0_col_out: bool @ 5,
+        pub obj_win_bg0: bool @ 8,
+        pub obj_win_bg1: bool @ 9,
+        pub obj_win_bg2: bool @ 10,
+        pub obj_win_bg3: bool @ 11,
+        pub obj_win_obj: bool @ 12,
+        pub obj_win_col: bool @ 13,
     }
 }
