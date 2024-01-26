@@ -75,13 +75,38 @@ impl Bus {
             &*self.vram, 
             &self.palette_ram, 
             &self.oam, 
-            &mut self.iff
+            &mut self.iff,
         );
         self.timers.tick(&mut self.iff, cycles);
-        self.dma_transfer(); // TODO: Optimize! Only call on state change.
+
+        /* 
+        The following DMA checks can still be optimized if they are only called
+        directly when HBlank or VBlank happens, instead this still checks stuff
+        every cycle but doesn't run it every cycle.
+
+        Similar for Immediate DMA. Problem is getting `self.dma_transfer` from
+        the borrow-checker into the PPU state machine.
+        */
+
+        // On state/mode change.
+        if self.ppu.prev_mode != self.ppu.current_mode {
+            use crate::ppu::lcd::Mode;
+            match self.ppu.current_mode {
+                Mode::HBlank => self.dma_transfer(StartTiming::HBlank),
+                Mode::VBlank => self.dma_transfer(StartTiming::VBlank),
+                Mode::HDraw => {},
+            }
+
+            self.ppu.prev_mode = self.ppu.current_mode;
+        }
+
+        // On enable transition for immediate DMAs.
+        if (0..4).any(|ch| self.dma_channels[ch].enable_edge()) {
+            self.dma_transfer(StartTiming::Immediate);
+        }
     }
 
-    fn dma_transfer(&mut self) {
+    fn dma_transfer(&mut self, dma_type: StartTiming) {
         let channels = self.dma_channels;
 
         for ch in 0..4 {
@@ -101,9 +126,9 @@ impl Bus {
 
             // TODO: Special start (Video Capture) timing and wow, this would be nicer with a scheduler.
             if channels[ch].enable {
-                if start_timing == StartTiming::Immediate
-                    || start_timing == StartTiming::HBlank && self.ppu.dispstat.hblank()
-                    || start_timing == StartTiming::VBlank && self.ppu.dispstat.vblank()
+                if start_timing == dma_type
+                    || start_timing == dma_type && self.ppu.dispstat.hblank() && !self.ppu.dispstat.vblank()
+                    || start_timing == dma_type && self.ppu.dispstat.vblank() 
                     // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
                 {
                     for _ in 0..word_count {
@@ -136,7 +161,7 @@ impl Bus {
                         self.iff.set_dma(ch);
                     }
 
-                    self.ppu.vid_capture = false;
+                    // self.ppu.vid_capture = false;
                     self.dma_channels[ch].src = src_addr;
                     self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
                 }

@@ -66,13 +66,14 @@ pub struct Ppu {
     internal_ref_xx: [i32; 2],
     internal_ref_xy: [i32; 2],
 
-    pub vid_capture: bool,
-    current_mode: Mode,
+    // pub vid_capture: bool,
+    pub prev_mode: Mode,
+    pub current_mode: Mode,
     cycle: u16,
 }
 
-#[derive(Default)]
-pub(super) enum Mode {
+#[derive(Default, Clone, Copy, PartialEq)]
+pub enum Mode {
     #[default]
     HDraw,
     HBlank,
@@ -103,6 +104,7 @@ impl Ppu {
                     self.scanline(vram, palette_ram, oam);
 
                     self.dispstat.set_hblank(true);
+                    self.prev_mode = self.current_mode;
                     self.current_mode = Mode::HBlank;
 
                     if self.dispstat.hblank_irq() {
@@ -134,10 +136,13 @@ impl Ppu {
                             iff.set_vblank(true);
                         }
                         self.dispstat.set_vblank(true);
+
+                        self.prev_mode = self.current_mode;
                         self.current_mode = Mode::VBlank;
                     } else {
+                        self.prev_mode = self.current_mode;
                         self.current_mode = Mode::HDraw;
-                        self.vid_capture = true;
+                        // self.vid_capture = true;
                     }
                 }
             }
@@ -165,10 +170,19 @@ impl Ppu {
                     }
 
                     if self.vcount.ly() == TOTAL_LINES {
-                        self.vcount.set_ly(0); // todo: vcount irq for ly = 0
+                        self.vcount.set_ly(0); // vcount irq for ly = 0
+
+                        self.dispstat
+                            .set_v_counter(self.vcount.ly() == self.dispstat.lyc());
+
+                        if self.dispstat.v_counter() && self.dispstat.v_counter_irq() {
+                            iff.set_vcount(true);
+                        }
+
                         self.dispstat.set_vblank(false);
+                        self.prev_mode = self.current_mode;
                         self.current_mode = Mode::HDraw;
-                        self.vid_capture = true;
+                        // self.vid_capture = true;
                     }
                 }
             }

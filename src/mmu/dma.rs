@@ -128,9 +128,16 @@ pub struct DMA {
     pub pak_drq: bool,
     pub dma_irq: bool,
     pub enable: bool,
+
+    prev_enable: bool,
 }
 
 impl DMA {
+    /// Did an edge transition (0 -> 1) happen for the enable bit?
+    pub fn enable_edge(&self) -> bool {
+        !self.prev_enable && self.enable
+    }
+
     /// Update all the bits from the DMAxCNT_H register.
     fn apply_dma_cnt(&mut self, value: u16) {
         self.dst_addr_ctrl = AddrControl::try_from((value & 0x60) >> 5).unwrap();
@@ -168,7 +175,7 @@ pub enum AddrControl {
     IncReload,
 }
 
-#[derive(ConvRaw, Default, Clone, Copy, PartialEq)]
+#[derive(ConvRaw, Default, Clone, Copy, PartialEq, Debug)]
 pub enum StartTiming {
     #[default]
     Immediate,
