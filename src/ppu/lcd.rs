@@ -102,7 +102,7 @@ struct Obj {
     alpha: bool,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug, PartialOrd)]
 enum Window {
     Win0,
     Win1,
@@ -525,20 +525,47 @@ impl Ppu {
         // Draw all the sprite layers on top of the backgrounds.
         for prio in bg_sorted {
             for x in 0..512 {
-                let sp = (self.current_sprite_line[x].prio == prio as u8)
+                let mut sp = (self.current_sprite_line[x].prio == prio as u8)
                     .then_some(self.current_sprite_line[x].px)
                     .flatten();
-                let bg = (is_bg_enabled & (1 << prio) != 0)
+                let mut bg = (is_bg_enabled & (1 << prio) != 0)
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
 
-                // if self.dispcnt.win0() || self.dispcnt.win1() {
-                //     if self.in_window(x, y, prio) == Window::WinOut && self.winout.0 & (1 << prio) != 0 {
-                //         bg = None;
-                //     } 
-                // }
 
-                render_line[x] = render_line[x].or(sp.or(bg));
+                // Windowing composition. TODO: OBJ Windows and find error in Super Circuit.
+                let final_px = if self.dispcnt.win0() || self.dispcnt.win1() {
+                    let window_obj = self.in_window(x, y, 4);
+                    let window_bg = self.in_window(x, y, prio);
+
+                    if window_bg == Window::WinOut {
+                        bg = if self.winout.0 & (1 << prio) == 0 { None } else { bg };
+                    } 
+                    if window_obj == Window::WinOut {
+                        sp = if self.winout.0 & (1 << 4) == 0 { None } else { sp };
+                    }
+
+                    let px = match window_obj.partial_cmp(&window_bg) {
+                        Some(cmp) => match cmp {
+                            std::cmp::Ordering::Less => sp,
+                            std::cmp::Ordering::Equal => {
+                                if window_obj == Window::WinOut {
+                                    sp.or(bg)
+                                } else {
+                                    sp
+                                }
+                            },
+                            std::cmp::Ordering::Greater => bg,
+                        },
+                        None => unreachable!(),
+                    };
+
+                    px
+                } else {
+                    sp.or(bg)
+                };
+
+                render_line[x] = render_line[x].or(final_px);
             }
         }
 
@@ -650,8 +677,6 @@ impl Ppu {
     }
 
     fn in_window(&self, x: usize, y: usize, bg: usize) -> Window {
-        let mut window = Window::WinOut;
-        
         for win in 0..2 {
             if self.dispcnt.0 & (1 << (13 + win)) == 0 {
                 continue;
@@ -665,13 +690,12 @@ impl Ppu {
 
             if self.winin.0 & (1 << (bg + win * 8)) != 0 {
                 if x >= x1 && x < x2 && y >= y1 && y < y2 {
-                    window = if win == 0 { Window::Win0 } else { Window::Win1 };
-                    break; 
+                    return if win == 0 { Window::Win0 } else { Window::Win1 };
                 }
             }
         }
 
-        window
+        Window::WinOut
     }
 }
 
@@ -805,7 +829,11 @@ impl Mcu for Ppu {
             0x003A => (self.bgxx[1] >> 16) as u16,
             0x003C => self.bgxy[1] as u16,
             0x003E => (self.bgxy[1] >> 16) as u16,
-            0x0050 => self.read16(_address),
+            0x0040 => self.winxh[0],
+            0x0042 => self.winxh[1],
+            0x0044 => self.winxv[0],
+            0x0046 => self.winxv[1],
+            0x0048..=0x0050 => self.read16(_address),
             0x0052 => self.bldalpha.bldalpha(),
             0x0054 => self.bldy.bldy(),
             _ => 0,
@@ -938,12 +966,12 @@ bitfield! {
     #[derive(Clone, Copy, Default)]
     pub struct WINOUT(pub u16) {
         pub winout: u16 @ ..,
-        pub win0_bg0_out: bool @ 0,
-        pub win0_bg1_out: bool @ 1,
-        pub win0_bg2_out: bool @ 2,
-        pub win0_bg3_out: bool @ 3,
-        pub win0_obj_out: bool @ 4,
-        pub win0_col_out: bool @ 5,
+        pub win_bg0_out: bool @ 0,
+        pub win_bg1_out: bool @ 1,
+        pub win_bg2_out: bool @ 2,
+        pub win_bg3_out: bool @ 3,
+        pub win_obj_out: bool @ 4,
+        pub win_col_out: bool @ 5,
         pub obj_win_bg0: bool @ 8,
         pub obj_win_bg1: bool @ 9,
         pub obj_win_bg2: bool @ 10,
