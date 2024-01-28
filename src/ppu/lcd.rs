@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use derivative::Derivative;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
@@ -106,8 +108,8 @@ struct Obj {
 enum Window {
     Win0,
     Win1,
-    WinOut,
     ObjWin,
+    WinOut,
 }
 
 impl Ppu {
@@ -515,10 +517,12 @@ impl Ppu {
 
         // Get bits 8..=11 to get bg-enable bits.
         let is_bg_enabled: u8 = bits!(self.dispcnt.0, 8..=11);
-        let mut bg_sorted = [0, 1, 2, 3];
-        bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
+        let backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
 
+        let mut bg_sorted = [0, 1, 2, 3];
         let mut render_line = vec![None; 512];
+
+        bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
         self.special_color_effect(palette_ram);
 
         // Draw all enabled background layers correctly sorted by priority.
@@ -531,7 +535,6 @@ impl Ppu {
                 let mut bg = (is_bg_enabled & (1 << prio) != 0)
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
-
 
                 // Windowing composition. TODO: OBJ Windows and find error in Super Circuit.
                 let final_px = if self.dispcnt.win0() || self.dispcnt.win1() {
@@ -547,15 +550,9 @@ impl Ppu {
 
                     let px = match window_obj.partial_cmp(&window_bg) {
                         Some(cmp) => match cmp {
-                            std::cmp::Ordering::Less => sp,
-                            std::cmp::Ordering::Equal => {
-                                if window_obj == Window::WinOut {
-                                    sp.or(bg)
-                                } else {
-                                    sp
-                                }
-                            },
-                            std::cmp::Ordering::Greater => bg,
+                            Ordering::Less => sp,
+                            Ordering::Equal => sp.or(bg),
+                            Ordering::Greater => bg.or(Some(backdrop)),
                         },
                         None => unreachable!(),
                     };
