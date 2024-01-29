@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use derivative::Derivative;
-use proc_bitfield::{bitfield, BitRange, ConvRaw};
+use proc_bitfield::{bitfield, Bit, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
@@ -104,7 +104,7 @@ struct Obj {
     alpha: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, PartialOrd)]
+#[derive(Clone, Copy, PartialEq, Debug, PartialOrd, Ord, Eq)]
 enum Window {
     Win0,
     Win1,
@@ -537,27 +537,23 @@ impl Ppu {
                     .flatten();
 
                 // Windowing composition. TODO: OBJ Windows and find error in Super Circuit.
-                let final_px = if self.dispcnt.win0() || self.dispcnt.win1() {
+                let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
                     let window_obj = self.in_window(x, y, 4);
                     let window_bg = self.in_window(x, y, prio);
 
                     if window_bg == Window::WinOut {
-                        bg = if self.winout.0 & (1 << prio) == 0 { None } else { bg };
+                        bg = if self.winout.0 & (1 << prio) != 0 { bg } else { None };
                     } 
+
                     if window_obj == Window::WinOut {
-                        sp = if self.winout.0 & (1 << 4) == 0 { None } else { sp };
+                        sp = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
                     }
 
-                    let px = match window_obj.partial_cmp(&window_bg) {
-                        Some(cmp) => match cmp {
-                            Ordering::Less => sp,
-                            Ordering::Equal => sp.or(bg),
-                            Ordering::Greater => bg.or(Some(backdrop)),
-                        },
-                        None => unreachable!(),
-                    };
-
-                    px
+                    match window_obj.cmp(&window_bg) {
+                        Ordering::Less => sp,
+                        Ordering::Equal => sp.or(bg),
+                        Ordering::Greater => bg.or(Some(backdrop)),
+                    }
                 } else {
                     sp.or(bg)
                 };
@@ -673,7 +669,7 @@ impl Ppu {
         }
     }
 
-    fn in_window(&self, x: usize, y: usize, bg: usize) -> Window {
+    fn in_window(&self, x: usize, y: usize, layer: usize) -> Window {
         for win in 0..2 {
             if self.dispcnt.0 & (1 << (13 + win)) == 0 {
                 continue;
@@ -685,7 +681,7 @@ impl Ppu {
             let y1 = (self.winxv[win] >> 8) as usize;
             let y2 = (self.winxv[win] & 0xFF) as usize;
 
-            if self.winin.0 & (1 << (bg + win * 8)) != 0 {
+            if self.winin.0 & (1 << (layer + win * 8)) != 0 {
                 if x >= x1 && x < x2 && y >= y1 && y < y2 {
                     return if win == 0 { Window::Win0 } else { Window::Win1 };
                 }
@@ -781,7 +777,10 @@ impl Mcu for Ppu {
             0x0044 => self.winxv[0] = value,
             0x0046 => self.winxv[1] = value,
             0x0048 => self.winin.set_winin(value),
-            0x004A => self.winout.set_winout(value),
+            0x004A => {
+                // println!("LY: {:X} | WINOUT: {:X}", self.vcount.ly(), value);
+                self.winout.set_winout(value);
+            },
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
