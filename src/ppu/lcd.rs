@@ -515,7 +515,7 @@ impl Ppu {
 
         // Get bits 8..=11 to get bg-enable bits.
         let is_bg_enabled: u8 = bits!(self.dispcnt.0, 8..=11);
-        let backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
+        let _backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
 
         let mut bg_sorted = [0, 1, 2, 3];
         let mut render_line = vec![None; 512];
@@ -535,7 +535,7 @@ impl Ppu {
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
 
-                // Windowing composition. TODO: OBJ Windows and find error in Super Circuit.
+                // Windowing composition. TODO: OBJ Windows (+ SFX bit).
                 let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
                     match win {
                         Window::Win0 | Window::Win1 => {
@@ -588,7 +588,16 @@ impl Ppu {
             // Top two layers (pixel, prio, bg, obj_alpha).
             let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
 
-            if self.dispcnt.obj() {
+            // TODO: same for bg, DONT BLEND LAYERS DISABLED IN WININ/WINOUT
+            let window = self.in_window(x, self.vcount.ly() as usize);
+            let sp_layer_in_win = match window {
+                Window::Win0 => self.winin.0 & (1 << 4) != 0,
+                Window::Win1 => self.winin.0 & (1 << 12) != 0,
+                Window::WinOut => self.winout.0 & (1 << 4) != 0,
+                Window::ObjWin => todo!(),
+            };
+
+            if self.dispcnt.obj() && sp_layer_in_win {
                 if let Some(px) = self.current_sprite_line[x].px {
                     let obj_layer = 4;
                     let prio = self.current_sprite_line[x].prio;
