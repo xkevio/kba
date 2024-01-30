@@ -1,7 +1,5 @@
-use std::cmp::Ordering;
-
 use derivative::Derivative;
-use proc_bitfield::{bitfield, Bit, BitRange, ConvRaw};
+use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
@@ -529,30 +527,37 @@ impl Ppu {
         // Draw all the sprite layers on top of the backgrounds.
         for prio in bg_sorted {
             for x in 0..512 {
-                let mut sp = (self.current_sprite_line[x].prio == prio as u8)
+                let win = self.in_window(x, y);
+                let sp = (self.current_sprite_line[x].prio == prio as u8)
                     .then_some(self.current_sprite_line[x].px)
                     .flatten();
-                let mut bg = (is_bg_enabled & (1 << prio) != 0)
+                let bg = (is_bg_enabled & (1 << prio) != 0)
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
 
                 // Windowing composition. TODO: OBJ Windows and find error in Super Circuit.
                 let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
-                    let window_obj = self.in_window(x, y, 4);
-                    let window_bg = self.in_window(x, y, prio);
+                    match win {
+                        Window::Win0 | Window::Win1 => {
+                            let offset = if win == Window::Win0 { 0 } else { 8 };
+                            // Check if obj layer is enabled in window.
+                            if self.winin.0 & (1 << (4 + offset)) != 0 {
+                                // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
+                                sp.or_else(|| if self.winin.0 & (1 << (prio + offset)) != 0 { bg } else { None })
+                            } else {
+                                // Else, check if current bg layer is enabled and use that.
+                                (self.winin.0 & (1 << (prio + offset)) != 0).then_some(bg).flatten()
+                            }
+                        },
+                        Window::WinOut => {
+                            // Check if either obj layer or bg layer is enabled for WINOUT.
+                            // Use whichever is not None (either color 0 or layer disabled).
+                            let sp_out = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
+                            let bg_out = if self.winout.0 & (1 << prio) != 0 { bg } else { None };
 
-                    if window_bg == Window::WinOut {
-                        bg = if self.winout.0 & (1 << prio) != 0 { bg } else { None };
-                    } 
-
-                    if window_obj == Window::WinOut {
-                        sp = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
-                    }
-
-                    match window_obj.cmp(&window_bg) {
-                        Ordering::Less => sp,
-                        Ordering::Equal => sp.or(bg),
-                        Ordering::Greater => bg.or(Some(backdrop)),
+                            sp_out.or(bg_out)
+                        },
+                        Window::ObjWin => todo!(),
                     }
                 } else {
                     sp.or(bg)
@@ -669,7 +674,7 @@ impl Ppu {
         }
     }
 
-    fn in_window(&self, x: usize, y: usize, layer: usize) -> Window {
+    fn in_window(&self, x: usize, y: usize) -> Window {
         for win in 0..2 {
             if self.dispcnt.0 & (1 << (13 + win)) == 0 {
                 continue;
@@ -681,10 +686,8 @@ impl Ppu {
             let y1 = (self.winxv[win] >> 8) as usize;
             let y2 = (self.winxv[win] & 0xFF) as usize;
 
-            if self.winin.0 & (1 << (layer + win * 8)) != 0 {
-                if x >= x1 && x < x2 && y >= y1 && y < y2 {
-                    return if win == 0 { Window::Win0 } else { Window::Win1 };
-                }
+            if x >= x1 && x < x2 && y >= y1 && y < y2 {
+                return if win == 0 { Window::Win0 } else { Window::Win1 };
             }
         }
 
