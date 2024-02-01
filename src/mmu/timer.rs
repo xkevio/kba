@@ -34,7 +34,7 @@ impl Timers {
                 tm_overflow[id] = self[id].tick();
             }
 
-            if tm_overflow[id] {
+            if tm_overflow[id] && self[id].irq {
                 iff.set_timer(id);
             }
         }
@@ -59,7 +59,7 @@ impl Mcu for Timers {
     fn read8(&mut self, address: u32) -> u8 {
         match address & 1 == 0 {
             true => self.read16(address) as u8,
-            false => (self.read16(address & 1) >> 8) as u8,
+            false => (self.read16(address & !1) >> 8) as u8,
         }
     }
 
@@ -115,16 +115,26 @@ pub struct Timer {
     freq: Freq,
     count_up: bool,
     irq: bool,
+
     start: bool,
+    prev_start: bool,
 }
 
 impl Timer {
     /// Update all the bits from the TMxCNT_H register.
     fn apply_tmr_cnt(&mut self, value: u16) {
         self.start = value & (1 << 7) != 0;
+
         self.irq = value & (1 << 6) != 0;
         self.count_up = value & (1 << 2) != 0;
         self.freq = Freq::try_from(value & 0x3).unwrap();
+
+        // Reload counter value upon change of start bit from 0 -> 1.
+        if !self.prev_start && self.start {
+            self.counter = self.reload;
+        }
+
+        self.prev_start = self.start;
     }
 
     /// Tick timer by one; if overflow -> load `reload`, else just increase.

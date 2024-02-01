@@ -503,7 +503,11 @@ impl Ppu {
                 };
 
                 if px_idx != 0 {
-                    self.current_sprite_line[screen_x] = Obj { px: Some(px), prio: sprite.prio, alpha: sprite.obj_mode == ObjMode::SemiTransparent };
+                    self.current_sprite_line[screen_x] = Obj { 
+                        px: Some(px), 
+                        prio: sprite.prio, 
+                        alpha: sprite.obj_mode == ObjMode::SemiTransparent 
+                    };
                 }
             }
         }
@@ -588,16 +592,22 @@ impl Ppu {
             // Top two layers (pixel, prio, bg, obj_alpha).
             let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
 
-            // TODO: same for bg, DONT BLEND LAYERS DISABLED IN WININ/WINOUT
             let window = self.in_window(x, self.vcount.ly() as usize);
-            let sp_layer_in_win = match window {
-                Window::Win0 => self.winin.0 & (1 << 4) != 0,
-                Window::Win1 => self.winin.0 & (1 << 12) != 0,
-                Window::WinOut => self.winout.0 & (1 << 4) != 0,
-                Window::ObjWin => todo!(),
+            // Check if layer is actually activated inside of a window before using it for blending.
+            let layer_in_win = |layer: usize| {
+                if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                    match window {
+                        Window::Win0 => self.winin.0 & (1 << layer) != 0,
+                        Window::Win1 => self.winin.0 & (1 << (layer + 8)) != 0,
+                        Window::WinOut => self.winout.0 & (1 << layer) != 0,
+                        Window::ObjWin => todo!(),
+                    }
+                } else {
+                    true
+                }
             };
 
-            if self.dispcnt.obj() && sp_layer_in_win {
+            if self.dispcnt.obj() && layer_in_win(4) {
                 if let Some(px) = self.current_sprite_line[x].px {
                     let obj_layer = 4;
                     let prio = self.current_sprite_line[x].prio;
@@ -621,7 +631,7 @@ impl Ppu {
                 }
             }
 
-            for bg in (0..4).filter(|b| enabled_bgs & (1 << b) != 0) {
+            for bg in (0..4).filter(|b| enabled_bgs & (1 << b) != 0 && layer_in_win(*b)) {
                 if let Some(px) = self.current_bg_line[bg][x] {
                     if self.bgxcnt[bg].prio() < layers.1[0] {
                         // Swap top and bottom layer.
