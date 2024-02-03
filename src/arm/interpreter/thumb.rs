@@ -463,7 +463,7 @@ impl Arm7TDMI {
 
         if !H {
             // Sign extend top half, shift by 12 offset bcs of prev shift.
-            let s_off = (((offset as u32) << 22) as i32 >> 22) << 12;
+            let s_off = (((offset as u32) << 21) as i32 >> 21) << 12;
             self.regs[14] = (self.regs[15] + 4).wrapping_add_signed(s_off);
         } else {
             let addr = self.regs[14] + ((offset << 1) as u32);
