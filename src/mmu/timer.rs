@@ -28,15 +28,10 @@ impl Timers {
 
             // Either tick up normally when the frequency is reached
             // or use Count-Up-Timing when previous timer overflows (not timer 0).
-            if !self[id].count_up && cycles % freq == 0
-                // || (self[id].count_up && id > 0 && tm_overflow[id - 1])
+            if (!self[id].count_up && cycles % freq == 0)
+                || (self[id].count_up && id > 0 && tm_overflow[id - 1])
             {
                 tm_overflow[id] = self[id].tick();
-            }
-
-            if self[id + 1].count_up && (0..3).contains(&id) && tm_overflow[id] {
-                // println!("timer {} counting up cause timer {id} overflowed", id + 1);
-                tm_overflow[id + 1] = self[id + 1].tick();
             }
 
             if tm_overflow[id] && self[id].irq {
@@ -132,7 +127,7 @@ impl Timer {
         self.start = value & (1 << 7) != 0;
 
         self.irq = value & (1 << 6) != 0;
-        self.count_up = value & (1 << 2) != 0;
+        self.count_up = if ID > 0 { value & (1 << 2) != 0 } else { false };
         self.freq = Freq::try_from(value & 0x3).unwrap();
 
         // Reload counter value upon change of start bit from 0 -> 1.

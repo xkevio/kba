@@ -240,7 +240,9 @@ impl Mcu for Bus {
             0x06 => self.vram[address as usize % 0x0001_8000] = value,
             0x07 => self.oam[address as usize % 0x400] = value,
             0x0E..=0x0F => {
-                print!("{}", value as char);
+                if value != 0x00 {
+                    print!("{}", value as char);
+                }
                 self.game_pak.sram[address as usize % 0x0001_0000] = value;
             },
             _ => {} // eprintln!("Write to ROM/unknown addr: {address:X}"),

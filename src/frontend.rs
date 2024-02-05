@@ -18,6 +18,7 @@ macro_rules! process_scancodes {
         paste! {
             $(
                 if $state.is_scancode_pressed(Scancode::$code) {
+                    println!("{:?} pressed", Scancode::$code);
                     $kba.cpu.bus.key_input.[<set_ $name>](false);
                 }
             )*
@@ -75,7 +76,7 @@ impl SDLApplication {
                 start => Return,
                 select => Backspace,
                 a => X,
-                b => Y,
+                b => Z,
                 l => A,
                 r => S
             );

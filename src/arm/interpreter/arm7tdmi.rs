@@ -216,6 +216,8 @@ impl Arm7TDMI {
             if (int_f & int_e) != 0 {
                 let cpsr = self.cpsr;
 
+                println!("IRQ from: {int_f:0b}");
+
                 // if int_f.bit::<3>() {
                 //     println!("Dispatching Timer 0 IRQ: {int_f:0b}");
                 // } else if int_f.bit::<4>() {
@@ -901,24 +903,41 @@ impl Arm7TDMI {
 
     /// Swap banked registers on mode change. Call before changing mode in CPSR. (TODO: check again.)
     fn swap_regs(&mut self, current_mode: Mode, new_mode: Mode) {
-        let cur_reg_set = self.banked_regs.index_mut(current_mode);
         
         if current_mode != Mode::Fiq {
-            std::mem::swap(&mut cur_reg_set.0, &mut self.spsr);
-            cur_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+            let cur_reg_set = &mut self.banked_regs[current_mode];
+            cur_reg_set.0 = self.spsr;
+            cur_reg_set.1.copy_from_slice(&self.regs[13..=14]);
         } else {
-            std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
-            self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+            self.banked_regs.fiq_regs.0 = self.spsr;
+            self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
         }
-        
-        let new_reg_set = self.banked_regs.index_mut(new_mode);
 
         if new_mode != Mode::Fiq {
-            std::mem::swap(&mut new_reg_set.0, &mut self.spsr);
-            new_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+            let new_reg_set = &mut self.banked_regs[new_mode];
+            self.spsr = new_reg_set.0;
+            self.regs[13..=14].copy_from_slice(&new_reg_set.1);
         } else {
-            std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
-            self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+            self.spsr = self.banked_regs.fiq_regs.0;
+            self.regs[8..=14].copy_from_slice(&self.banked_regs.fiq_regs.1);
         }
+        
+        // if current_mode != Mode::Fiq {
+        //     std::mem::swap(&mut cur_reg_set.0, &mut self.spsr);
+        //     cur_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+        // } else {
+        //     std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
+        //     self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+        // }
+        
+        // let new_reg_set = self.banked_regs.index_mut(new_mode);
+
+        // if new_mode != Mode::Fiq {
+        //     std::mem::swap(&mut new_reg_set.0, &mut self.spsr);
+        //     new_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+        // } else {
+        //     std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
+        //     self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+        // }
     }
 }
