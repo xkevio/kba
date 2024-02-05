@@ -337,16 +337,17 @@ impl Arm7TDMI {
         };
     }
 
-    /// Format 13: add offset to SP. (todo: 9 bit constant?)
+    /// Format 13: add offset to SP.
+    /// 
+    /// No const generic with current 8bit thumb decoding :(
     pub fn add_sp(&mut self, opcode: u16) {
-        let offset = (opcode & 0x7F) as i8 as i32;
-        let s = opcode & (1 << 7) != 0;
+        let offset = (opcode & 0x7F) as u32;
+        let sign = opcode & (1 << 7) != 0;
 
-        // No const generic with current 8bit thumb decoding :(
-        if s {
-            self.regs[13] -= (offset << 2) as u32;
+        if sign {
+            self.regs[13] -= offset << 2;
         } else {
-            self.regs[13] = self.regs[13].wrapping_add_signed(offset << 2);
+            self.regs[13] += offset << 2;
         }
     }
 
@@ -440,8 +441,10 @@ impl Arm7TDMI {
         let signed_offset = (opcode as i8 as i32) << 1;
 
         if self.cond((opcode >> 8) as u8 & 0xF) {
-            self.regs[15] = self.regs[15].wrapping_add_signed(signed_offset + 4 - 2);
+            self.regs[15] = (self.regs[15] + 4).wrapping_add_signed(signed_offset);
             self.regs[15] &= !1;
+
+            self.branch = true;
         }
     }
 
@@ -452,9 +455,11 @@ impl Arm7TDMI {
 
     /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
-        let signed_offset = ((opcode as i16 & 0x7FF) << 5) as i32 >> 5;
-        self.regs[15] = self.regs[15].wrapping_add_signed((signed_offset << 1) + 4 - 2);
+        let signed_offset = ((opcode as i32 & 0x7FF) << 21) >> 21;
+        self.regs[15] = (self.regs[15] + 4).wrapping_add_signed(signed_offset << 1);
         self.regs[15] &= !1;
+
+        self.branch = true;
     }
 
     /// Format 19: long branch with link.
@@ -476,5 +481,7 @@ impl Arm7TDMI {
     }
 
     /// Dummy for Thumb LUT.
-    pub fn t_undefined(&mut self, _opcode: u16) {}
+    pub fn t_undefined(&mut self, _opcode: u16) {
+        panic!("shouldn't be called!")
+    }
 }

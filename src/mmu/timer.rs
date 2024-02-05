@@ -28,13 +28,19 @@ impl Timers {
 
             // Either tick up normally when the frequency is reached
             // or use Count-Up-Timing when previous timer overflows (not timer 0).
-            if (!self[id].count_up && cycles % freq == 0)
-                || (self[id].count_up && id > 0 && tm_overflow[id - 1])
+            if !self[id].count_up && cycles % freq == 0
+                // || (self[id].count_up && id > 0 && tm_overflow[id - 1])
             {
                 tm_overflow[id] = self[id].tick();
             }
 
+            if self[id + 1].count_up && (0..3).contains(&id) && tm_overflow[id] {
+                // println!("timer {} counting up cause timer {id} overflowed", id + 1);
+                tm_overflow[id + 1] = self[id + 1].tick();
+            }
+
             if tm_overflow[id] && self[id].irq {
+                // println!("Requesting timer {id} IRQ!");
                 iff.set_timer(id);
             }
         }
@@ -66,13 +72,13 @@ impl Mcu for Timers {
     fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0100 => self[0].reload = value,
-            0x0102 => self[0].apply_tmr_cnt(value),
+            0x0102 => self[0].apply_tmr_cnt::<0>(value),
             0x0104 => self[1].reload = value,
-            0x0106 => self[1].apply_tmr_cnt(value),
+            0x0106 => self[1].apply_tmr_cnt::<1>(value),
             0x0108 => self[2].reload = value,
-            0x010A => self[2].apply_tmr_cnt(value),
+            0x010A => self[2].apply_tmr_cnt::<2>(value),
             0x010C => self[3].reload = value,
-            0x010E => self[3].apply_tmr_cnt(value),
+            0x010E => self[3].apply_tmr_cnt::<3>(value),
             _ => unreachable!(),
         }
     }
@@ -122,7 +128,7 @@ pub struct Timer {
 
 impl Timer {
     /// Update all the bits from the TMxCNT_H register.
-    fn apply_tmr_cnt(&mut self, value: u16) {
+    fn apply_tmr_cnt<const ID: usize>(&mut self, value: u16) {
         self.start = value & (1 << 7) != 0;
 
         self.irq = value & (1 << 6) != 0;
@@ -131,8 +137,11 @@ impl Timer {
 
         // Reload counter value upon change of start bit from 0 -> 1.
         if !self.prev_start && self.start {
+            // println!("RELOAD BECAUSE {} to {} from {value:X}", self.prev_start, self.start);
             self.counter = self.reload;
         }
+
+        // println!("Write to TM{ID}CNT_H: {value:X}");
 
         self.prev_start = self.start;
     }

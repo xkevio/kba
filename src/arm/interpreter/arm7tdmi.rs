@@ -3,7 +3,7 @@ use std::{collections::HashMap, ops::{Index, IndexMut}};
 use crate::{
     arm::arr_with, box_arr, fl, mmu::{bus::Bus, game_pak::GamePak, Mcu}
 };
-use proc_bitfield::{bitfield, ConvRaw};
+use proc_bitfield::{bitfield, Bit, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
 type Spsr = Cpsr;
@@ -183,16 +183,20 @@ impl Arm7TDMI {
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
                 if self.cond(cond as u8) {
-                    // println!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
+                    // print!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
+                    // println!(" // {:X?}", self.regs);
+
                     ARM_INSTRUCTIONS[op_index as usize](self, opcode);
                 }
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
-                // println!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
+                // print!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
+                // println!(" // {:X?}", self.regs);
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
+
 
         self.regs[15] += match self.cpsr.state() {
             State::Arm if !self.branch => 4,
@@ -211,6 +215,16 @@ impl Arm7TDMI {
 
             if (int_f & int_e) != 0 {
                 let cpsr = self.cpsr;
+
+                // if int_f.bit::<3>() {
+                //     println!("Dispatching Timer 0 IRQ: {int_f:0b}");
+                // } else if int_f.bit::<4>() {
+                //     println!("Dispatching Timer 1 IRQ: {int_f:0b}");
+                // } else if int_f.bit::<5>() {
+                //     println!("Dispatching Timer 2 IRQ: {int_f:0b}");
+                // } else if int_f.bit::<6>() {
+                //     println!("Dispatching Timer 3 IRQ: {int_f:0b}");
+                // }
 
                 // Switch to ARM state.
                 self.cpsr.set_state(State::Arm);
@@ -460,14 +474,15 @@ impl Arm7TDMI {
         let ioffset = (opcode & 0x00FF_FFFF) << 2;
         let link = opcode & (1 << 24) != 0;
 
-        let ioffset = if opcode & (1 << 23) != 0 {
-            0xFF00_0000 | ioffset
-        } else {
-            ioffset & 0x00FF_FFFF
-        } as i32;
+        let ioffset = (ioffset << 6) as i32 >> 6;
+        // let ioffset = if opcode & (1 << 23) != 0 {
+        //     0xFF00_0000 | ioffset
+        // } else {
+        //     ioffset & 0x00FF_FFFF
+        // } as i32;
 
         if link {
-            self.regs[14] = self.regs[15] + 4;
+            self.regs[14] = (self.regs[15] + 4) & !3;
         }
 
         self.branch = true;
@@ -535,7 +550,7 @@ impl Arm7TDMI {
 
         // Switch to ARM state.
         self.cpsr.set_state(State::Arm);
-        self.cpsr.set_irq(true);
+        // self.cpsr.set_irq(true);
 
         // Switch to SVC mode.
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
