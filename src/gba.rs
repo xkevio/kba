@@ -22,7 +22,6 @@ impl Gba {
     pub fn run(&mut self) {
         if self.cpu.bus.halt && (self.cpu.bus.ie.0 & self.cpu.bus.iff.0) != 0 {
             self.cpu.bus.halt = false;
-            // println!("Leaving HALT mode!");
         }
 
         if !self.cpu.bus.halt {
@@ -30,7 +29,7 @@ impl Gba {
             self.cpu.cycle();
         }
 
-        self.cpu.bus.tick(self.cycles);
+        self.cpu.bus.tick(&mut self.cycles);
         self.cycles += 1;
     }
 }

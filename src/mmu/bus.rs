@@ -42,6 +42,7 @@ pub struct Bus {
     pub game_pak: GamePak,
 
     pub halt: bool,
+    pub dma_in_progress: [bool; 4],
 }
 
 impl Default for Bus {
@@ -65,19 +66,20 @@ impl Default for Bus {
             game_pak: GamePak::default(),
 
             halt: false,
+            dma_in_progress: [false; 4],
         }
     }
 }
 
 impl Bus {
-    pub fn tick(&mut self, cycles: usize) {
+    pub fn tick(&mut self, cycles: &mut usize) {
         self.ppu.cycle(
             &*self.vram, 
             &self.palette_ram, 
             &self.oam, 
             &mut self.iff,
         );
-        self.timers.tick(&mut self.iff, cycles);
+        self.timers.tick(&mut self.iff, *cycles);
 
         /* 
         The following DMA checks can still be optimized if they are only called
@@ -88,25 +90,28 @@ impl Bus {
         the borrow-checker into the PPU state machine.
         */
 
-        // On state/mode change.
-        if self.ppu.prev_mode != self.ppu.current_mode {
-            use crate::ppu::lcd::Mode;
-            match self.ppu.current_mode {
-                Mode::HBlank => self.dma_transfer(StartTiming::HBlank),
-                Mode::VBlank => self.dma_transfer(StartTiming::VBlank),
-                Mode::HDraw => {},
+        // If any DMA is in progress
+        if self.dma_in_progress.iter().all(|c| *c == false) {
+            // On state/mode change.
+            if self.ppu.prev_mode != self.ppu.current_mode {
+                use crate::ppu::lcd::Mode;
+                match self.ppu.current_mode {
+                    Mode::HBlank => self.dma_transfer(StartTiming::HBlank, cycles),
+                    Mode::VBlank => self.dma_transfer(StartTiming::VBlank, cycles),
+                    Mode::HDraw => {},
+                }
+    
+                self.ppu.prev_mode = self.ppu.current_mode;
             }
-
-            self.ppu.prev_mode = self.ppu.current_mode;
-        }
-
-        // On enable transition for immediate DMAs.
-        if (0..4).any(|ch| self.dma_channels[ch].enable_edge()) {
-            self.dma_transfer(StartTiming::Immediate);
+    
+            // On enable transition for immediate DMAs.
+            if (0..4).any(|ch| self.dma_channels[ch].enable_edge()) {
+                self.dma_transfer(StartTiming::Immediate, cycles);
+            }
         }
     }
 
-    fn dma_transfer(&mut self, dma_type: StartTiming) {
+    fn dma_transfer(&mut self, dma_type: StartTiming, cycles: &mut usize) {
         let channels = self.dma_channels;
 
         for ch in 0..4 {
@@ -131,6 +136,8 @@ impl Bus {
                     || start_timing == dma_type && self.ppu.dispstat.vblank() 
                     // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
                 {
+                    self.dma_in_progress[ch] = true;
+
                     for _ in 0..word_count {
                         if channels[ch].transfer_type {
                             let data = self.read32(src_addr);
@@ -139,6 +146,9 @@ impl Bus {
                             let data = self.read16(src_addr);
                             self.write16(dst_addr, data);
                         }
+                        
+                        self.tick(cycles);
+                        *cycles += 1;
 
                         src_addr = match src_addr_control {
                             AddrControl::Increment => src_addr + addr_delta,
@@ -162,6 +172,7 @@ impl Bus {
                     }
 
                     // self.ppu.vid_capture = false;
+                    self.dma_in_progress[ch] = false;
                     self.dma_channels[ch].src = src_addr;
                     self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
                 }

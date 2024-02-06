@@ -438,10 +438,15 @@ impl Arm7TDMI {
 
     /// Format 16: conditional branch.
     pub fn cond_branch(&mut self, opcode: u16) {
-        let signed_offset = (opcode as i8 as i32) << 1;
+        let signed_offset = (opcode as u32) & 0xFF;
+        let signed_offset = if signed_offset & 0x80 != 0 {
+            (signed_offset | 0xFFFF_FF00) as i32
+        } else {
+            signed_offset as i32
+        };
 
         if self.cond((opcode >> 8) as u8 & 0xF) {
-            self.regs[15] = (self.regs[15] + 4).wrapping_add_signed(signed_offset);
+            self.regs[15] = (self.regs[15] + 4).wrapping_add_signed(signed_offset << 1);
             self.regs[15] &= !1;
 
             self.branch = true;
@@ -455,7 +460,7 @@ impl Arm7TDMI {
 
     /// Format 18: unconditional branch.
     pub fn branch(&mut self, opcode: u16) {
-        let signed_offset = ((opcode as i32 & 0x7FF) << 21) >> 21;
+        let signed_offset = ((opcode as u32 & 0x7FF) << 21) as i32 >> 21;
         self.regs[15] = (self.regs[15] + 4).wrapping_add_signed(signed_offset << 1);
         self.regs[15] &= !1;
 

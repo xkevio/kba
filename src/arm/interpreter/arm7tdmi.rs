@@ -216,7 +216,7 @@ impl Arm7TDMI {
             if (int_f & int_e) != 0 {
                 let cpsr = self.cpsr;
 
-                println!("IRQ from: {int_f:0b}");
+                // println!("IRQ from: {int_f:0b}");
 
                 // if int_f.bit::<3>() {
                 //     println!("Dispatching Timer 0 IRQ: {int_f:0b}");
@@ -473,22 +473,17 @@ impl Arm7TDMI {
 
     /// Branch and Link.
     pub fn bl(&mut self, opcode: u32) {
-        let ioffset = (opcode & 0x00FF_FFFF) << 2;
+        let offset = (opcode & 0x00FF_FFFF) << 2;
         let link = opcode & (1 << 24) != 0;
 
-        let ioffset = (ioffset << 6) as i32 >> 6;
-        // let ioffset = if opcode & (1 << 23) != 0 {
-        //     0xFF00_0000 | ioffset
-        // } else {
-        //     ioffset & 0x00FF_FFFF
-        // } as i32;
+        let signed_off = (offset << 6) as i32 >> 6;
 
         if link {
             self.regs[14] = (self.regs[15] + 4) & !3;
         }
 
         self.branch = true;
-        self.regs[15] = ((self.regs[15] + 8).wrapping_add_signed(ioffset)) & !3;
+        self.regs[15] = ((self.regs[15] + 8).wrapping_add_signed(signed_off)) & !3;
     }
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
@@ -518,15 +513,18 @@ impl Arm7TDMI {
 
             // User mode can only change flag bits.
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
-                source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
+                source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
             } else {
+                // Force bit 4 to always be set.
+                let rm = rm | 0x10;
+
                 // Set flag bits.
                 if opcode & (1 << 19) != 0 {
-                    source_psr.set_cpsr((rm & 0xF000_0000) | (source_psr.cpsr() & 0x0FFF_FFFF));
+                    source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
                 }
                 // Set control bits.
                 if opcode & (1 << 16) != 0 {
-                    source_psr.set_cpsr((rm & 0xDF) | (source_psr.cpsr() & !0xDF));
+                    source_psr.set_cpsr((rm & 0xFF) | (source_psr.cpsr() & !0xFF));
                 }
             }
 
@@ -538,7 +536,7 @@ impl Arm7TDMI {
 
             // If PSR = CPSR and modes differ and control bits get set, change mode.
             if let Ok(new_mode) = Mode::try_from(rm & 0x1F) {
-                if !PSR && current_mode as u32 != (rm & 0x1F) && opcode & (1 << 16) != 0 {
+                if !PSR && current_mode != new_mode && opcode & (1 << 16) != 0 {
                     self.swap_regs(current_mode, new_mode);
                     self.cpsr.set_mode(new_mode);
                 }
@@ -552,7 +550,7 @@ impl Arm7TDMI {
 
         // Switch to ARM state.
         self.cpsr.set_state(State::Arm);
-        // self.cpsr.set_irq(true);
+        self.cpsr.set_irq(true);
 
         // Switch to SVC mode.
         self.swap_regs(self.cpsr.mode().unwrap(), Mode::Supervisor);
@@ -901,43 +899,54 @@ impl Arm7TDMI {
         (rm.rotate_right(amount), rm & (1 << (amount - 1)) != 0)
     }
 
-    /// Swap banked registers on mode change. Call before changing mode in CPSR. (TODO: check again.)
+    /// Swap banked registers on mode change. Call before changing mode in CPSR.
     fn swap_regs(&mut self, current_mode: Mode, new_mode: Mode) {
-        
-        if current_mode != Mode::Fiq {
-            let cur_reg_set = &mut self.banked_regs[current_mode];
-            cur_reg_set.0 = self.spsr;
-            cur_reg_set.1.copy_from_slice(&self.regs[13..=14]);
-        } else {
-            self.banked_regs.fiq_regs.0 = self.spsr;
-            self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
+        if current_mode == new_mode {
+            return;
         }
 
-        if new_mode != Mode::Fiq {
-            let new_reg_set = &mut self.banked_regs[new_mode];
-            self.spsr = new_reg_set.0;
-            self.regs[13..=14].copy_from_slice(&new_reg_set.1);
-        } else {
-            self.spsr = self.banked_regs.fiq_regs.0;
+        let spsr = self.spsr;
+        match current_mode {
+            Mode::Fiq => self.banked_regs.fiq_regs.0 = spsr,
+            _ => self.banked_regs[current_mode].0 = spsr,
+        }
+
+        self.spsr = match new_mode {
+            Mode::System | Mode::User => self.cpsr,
+            Mode::Fiq => self.banked_regs.fiq_regs.0,
+            _ => self.banked_regs[new_mode].0
+        };
+
+        if current_mode == Mode::Fiq {
+            self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
+            self.regs[8..=14].copy_from_slice(&self.banked_regs.sys_regs.1[8..=14]);
+        }
+
+        if new_mode == Mode::Fiq {
+            self.banked_regs.sys_regs.1[8..=14].copy_from_slice(&self.regs[8..=14]);
             self.regs[8..=14].copy_from_slice(&self.banked_regs.fiq_regs.1);
         }
-        
+
+        if current_mode != Mode::Fiq && new_mode != Mode::Fiq {
+            self.banked_regs[current_mode].1.copy_from_slice(&self.regs[13..=14]);
+            self.regs[13..=14].copy_from_slice(&self.banked_regs[new_mode].1);
+        }
         // if current_mode != Mode::Fiq {
-        //     std::mem::swap(&mut cur_reg_set.0, &mut self.spsr);
-        //     cur_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+        //     let cur_reg_set = &mut self.banked_regs[current_mode];
+        //     cur_reg_set.0 = self.spsr;
+        //     cur_reg_set.1.copy_from_slice(&self.regs[13..=14]);
         // } else {
-        //     std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
-        //     self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+        //     self.banked_regs.fiq_regs.0 = self.spsr;
+        //     self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
         // }
-        
-        // let new_reg_set = self.banked_regs.index_mut(new_mode);
 
         // if new_mode != Mode::Fiq {
-        //     std::mem::swap(&mut new_reg_set.0, &mut self.spsr);
-        //     new_reg_set.1.swap_with_slice(&mut self.regs[13..=14]);
+        //     let new_reg_set = &mut self.banked_regs[new_mode];
+        //     self.spsr = new_reg_set.0;
+        //     self.regs[13..=14].copy_from_slice(&new_reg_set.1);
         // } else {
-        //     std::mem::swap(&mut self.banked_regs.fiq_regs.0, &mut self.spsr);
-        //     self.banked_regs.fiq_regs.1.swap_with_slice(&mut self.regs[8..=14]);
+        //     self.spsr = self.banked_regs.fiq_regs.0;
+        //     self.regs[8..=14].copy_from_slice(&self.banked_regs.fiq_regs.1);
         // }
     }
 }
