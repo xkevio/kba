@@ -51,7 +51,7 @@ impl Default for Bus {
             bios: include_bytes!("gba_bios.bin"),
 
             ppu: Ppu::default(),
-            key_input: KEYINPUT(0xFFFF),
+            key_input: KEYINPUT(0x03FF),
             ime: IME(0),
             ie: IE(0),
             iff: IF(0),

@@ -96,7 +96,7 @@ impl SDLApplication {
             )?;
 
             kba.cycles = 0;
-            kba.cpu.bus.key_input.set_keyinput(0xFFFF);
+            kba.cpu.bus.key_input.set_keyinput(0x03FF);
 
             self.canvas.clear();
             self.canvas.copy(&texture, None, None)?;

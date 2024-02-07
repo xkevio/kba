@@ -383,10 +383,7 @@ impl Arm7TDMI {
             address += 4;
         }
 
-        // Writeback if r13 not in reg list.
-        if (L && !reg_list.contains(&13)) || !L {
-            self.regs[13] = address;
-        }
+        self.regs[13] = address;
     }
 
     /// Format 15: multiple load/store

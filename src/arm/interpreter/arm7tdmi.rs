@@ -156,18 +156,19 @@ impl Arm7TDMI {
 
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
-            sys_regs: (Cpsr(0), [0x0300_7F00, 0]),
-            und_regs: (Cpsr(0), [0x0300_7FF0, 0]),
-            abt_regs: (Cpsr(0), [0x0300_7FF0, 0]),
-            svc_regs: (Cpsr(0), [0x0300_7FE0, 0]),
-            irq_regs: (Cpsr(0), [0x0300_7FA0, 0]),
-            fiq_regs: (Cpsr(0), arr_with(5, 0x0300_7FF0)),
+            sys_regs: (Cpsr(0x1F), [0x0300_7F00, 0]),
+            und_regs: (Cpsr(0x1F), [0x0300_7FF0, 0]),
+            abt_regs: (Cpsr(0x1F), [0x0300_7FF0, 0]),
+            svc_regs: (Cpsr(0x1F), [0x0300_7FE0, 0]),
+            irq_regs: (Cpsr(0x1F), [0x0300_7FA0, 0]),
+            fiq_regs: (Cpsr(0x1F), arr_with(5, 0x0300_7FF0)),
         };
 
         Self {
             regs,
             cpsr: Cpsr(0x6000_001F),
             bus,
+            spsr: Cpsr(0x1F),
             banked_regs,
             ..Default::default()
         }
@@ -183,16 +184,16 @@ impl Arm7TDMI {
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
                 if self.cond(cond as u8) {
-                    // print!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
-                    // println!(" // {:X?}", self.regs);
+                    // print!("PC: {:08X} | INSTR: {:08X}", self.regs[15], opcode);
+                    // println!(" // {:08X?}", self.regs);
 
                     ARM_INSTRUCTIONS[op_index as usize](self, opcode);
                 }
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
-                // print!("PC: {:X} | INSTR: {:X}", self.regs[15], opcode);
-                // println!(" // {:X?}", self.regs);
+                // print!("PC: {:08X} | INSTR: {:04X}", self.regs[15], opcode);
+                // println!(" // {:08X?}", self.regs);
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
@@ -488,9 +489,12 @@ impl Arm7TDMI {
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
     pub fn psr_transfer<const I: bool, const PSR: bool>(&mut self, opcode: u32) {
+        let Ok(current_mode) = self.cpsr.mode() else {
+            return;
+        };
         let mut source_psr = match PSR {
-            true => self.spsr,
-            false => self.cpsr,
+            true if (current_mode != Mode::User || current_mode != Mode::System) => self.spsr,
+            _ => self.cpsr,
         };
 
         // MRS (transfer PSR contents to register)
@@ -507,9 +511,9 @@ impl Arm7TDMI {
             };
 
             // Get current mode before possible CPSR change.
-            let Ok(current_mode) = self.cpsr.mode() else {
-                return;
-            };
+            // let Ok(current_mode) = self.cpsr.mode() else {
+            //     return;
+            // };
 
             // User mode can only change flag bits.
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
@@ -530,8 +534,9 @@ impl Arm7TDMI {
 
             // Assign to correct PSR.
             match PSR {
-                true => self.spsr = source_psr,
+                true if (current_mode != Mode::User || current_mode != Mode::System) => self.spsr = source_psr,
                 false => self.cpsr = source_psr,
+                _ => {}
             }
 
             // If PSR = CPSR and modes differ and control bits get set, change mode.
@@ -652,11 +657,13 @@ impl Arm7TDMI {
             self.regs[opcode as usize & 0xF]
         };
 
+        let pc_off = (rn == 15) as u32 * 8;
+
         let base_with_offset = if U {
             self.regs[rn] + offset
         } else {
             self.regs[rn] - offset
-        };
+        } + pc_off;
 
         let address = if P { base_with_offset } else { self.regs[rn] };
         let (aligned_addr, ror) = if address % 2 != 0 {
@@ -667,6 +674,7 @@ impl Arm7TDMI {
 
         // Load from memory if L, else store register into memory.
         if L {
+            self.branch = rd == 15;
             if !S {
                 self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror);
             } else {
@@ -677,7 +685,7 @@ impl Arm7TDMI {
                 }
             }
         } else {
-            self.bus.write16(aligned_addr, self.regs[rd] as u16);
+            self.bus.write16(aligned_addr, self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 });
         }
 
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
