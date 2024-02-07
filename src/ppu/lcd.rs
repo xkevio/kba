@@ -184,7 +184,7 @@ impl Ppu {
                         iff.set_vcount(true);
                     }
 
-                    if self.vcount.ly() == TOTAL_LINES {
+                    if self.vcount.ly() >= TOTAL_LINES {
                         self.vcount.set_ly(0); // vcount irq for ly = 0
 
                         self.dispstat
@@ -740,8 +740,14 @@ impl Mcu for Ppu {
 
     fn write16(&mut self, address: u32, value: u16) {
         match address {
-            0x0000 => self.dispcnt.set_dispcnt(value),
-            0x0004 => self.dispstat.set_dispstat(value),
+            0x0000 => {
+                // println!("WRITE TO DISPCNT: {value:X}");
+                self.dispcnt.set_dispcnt(value);
+            },
+            0x0004 => {
+                println!("WRITE TO DISPSTAT: {:X}", value & !0b111);
+                self.dispstat.set_dispstat((value & !0b111) | self.dispstat.0 & 0b111);
+            },
             0x0008 => self.bgxcnt[0].set_bg_control(value),
             0x000A => self.bgxcnt[1].set_bg_control(value),
             0x000C => self.bgxcnt[2].set_bg_control(value),

@@ -43,6 +43,9 @@ pub struct Bus {
 
     pub halt: bool,
     pub dma_in_progress: [bool; 4],
+
+    pub cpu_r: [u32; 16],
+    pub state: bool,
 }
 
 impl Default for Bus {
@@ -67,6 +70,9 @@ impl Default for Bus {
 
             halt: false,
             dma_in_progress: [false; 4],
+
+            cpu_r: [0; 16],
+            state: false,
         }
     }
 }
@@ -179,12 +185,38 @@ impl Bus {
             }
         }
     }
+
+    // fn open_bus<const ARM: bool>(&mut self, pc: u32) -> u32 {
+    //     if ARM {
+    //         self.read32(pc + 8)
+    //     } else {
+    //         match pc >> 24 {
+    //             0x02 | 0x05 | 0x06 | 0x08..=0x0D => {
+    //                 ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 4) as u32)
+    //             }
+    //             0x00 | 0x07 => {
+    //                 if pc % 4 == 0 {
+    //                     ((self.read16(pc + 6) as u32) << 16) | (self.read16(pc + 4) as u32)
+    //                 } else {
+    //                     ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 2) as u32)
+    //                 }
+    //             }
+    //             _ => {
+    //                 if pc % 4 == 0 {
+    //                     ((self.read16(pc + 2) as u32) << 16) | (self.read16(pc + 4) as u32)
+    //                 } else {
+    //                     ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 2) as u32)
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 impl Mcu for Bus {
     #[rustfmt::skip]
     fn read8(&mut self, address: u32) -> u8 {
-        match address >> 24 {
+        let a = match address >> 24 {
             0x00 if address < 0x4000 => self.bios[address as usize],
             0x02 => self.wram[address as usize % 0x0004_0000],
             0x03 => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
@@ -199,8 +231,8 @@ impl Mcu for Bus {
                 0x0202 => bits!(self.iff.0, 0..=7),
                 0x0203 => bits!(self.iff.0, 8..=15),
                 0x0208 => self.ime.enabled() as u8,
-                0x0209 => bits!(self.ime.0, 0..=7),
-                0x020A => bits!(self.ime.0, 8..=15),
+                0x0209 => bits!(self.ime.0, 8..=15),
+                0x020A => bits!(self.ime.0, 16..=23),
                 0x020B => bits!(self.ime.0, 24..=31),
                 _ => 0x00,
             },
@@ -219,7 +251,14 @@ impl Mcu for Bus {
                 }
             }
             _ => 0,
+        };
+
+        if a == 0x6C {
+            println!("possible 0x6C read detected");
+            println!("-> {:X?}", self.cpu_r);
         }
+
+        a
     }
 
     #[rustfmt::skip]
@@ -248,7 +287,10 @@ impl Mcu for Bus {
                 _ => {}
             },
             0x05 => self.palette_ram[address as usize % 0x400] = value,
-            0x06 => self.vram[address as usize % 0x0001_8000] = value,
+            0x06 => {
+                println!("{:X} | VRAM write to {address:X} with {value:X}, r3: {:X}, r4: {:X}", self.cpu_r[15], self.cpu_r[3], self.cpu_r[4]);
+                self.vram[address as usize % 0x0001_8000] = value;
+            },
             0x07 => self.oam[address as usize % 0x400] = value,
             0x0E..=0x0F => {
                 if value != 0x00 {

@@ -176,6 +176,9 @@ impl Arm7TDMI {
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
+        self.bus.cpu_r.copy_from_slice(&self.regs);
+        self.bus.state = if self.cpsr.state() == State::Arm { true } else { false };
+
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -184,7 +187,7 @@ impl Arm7TDMI {
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
                 if self.cond(cond as u8) {
-                    // print!("PC: {:08X} | INSTR: {:08X}", self.regs[15], opcode);
+                    // println!("PC: {:08X}", self.regs[15]);
                     // println!(" // {:08X?}", self.regs);
 
                     ARM_INSTRUCTIONS[op_index as usize](self, opcode);
@@ -192,7 +195,7 @@ impl Arm7TDMI {
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
-                // print!("PC: {:08X} | INSTR: {:04X}", self.regs[15], opcode);
+                // println!("PC: {:08X}", self.regs[15]);
                 // println!(" // {:08X?}", self.regs);
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
@@ -208,7 +211,7 @@ impl Arm7TDMI {
         self.branch = false;
     }
 
-    /// Check for interrupts between instructions and jump to corresponding vector.
+    /// Check for interrupts between instructions and jump to exception vector.
     pub fn dispatch_irq(&mut self) {
         if self.bus.ime.enabled() && !self.cpsr.irq() {
             let int_e = self.bus.ie.ie();
@@ -216,18 +219,6 @@ impl Arm7TDMI {
 
             if (int_f & int_e) != 0 {
                 let cpsr = self.cpsr;
-
-                // println!("IRQ from: {int_f:0b}");
-
-                // if int_f.bit::<3>() {
-                //     println!("Dispatching Timer 0 IRQ: {int_f:0b}");
-                // } else if int_f.bit::<4>() {
-                //     println!("Dispatching Timer 1 IRQ: {int_f:0b}");
-                // } else if int_f.bit::<5>() {
-                //     println!("Dispatching Timer 2 IRQ: {int_f:0b}");
-                // } else if int_f.bit::<6>() {
-                //     println!("Dispatching Timer 3 IRQ: {int_f:0b}");
-                // }
 
                 // Switch to ARM state.
                 self.cpsr.set_state(State::Arm);
@@ -517,6 +508,7 @@ impl Arm7TDMI {
 
             // User mode can only change flag bits.
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
+                // println!("MSR from user mode to change flag bits with {rm:X}");
                 source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
             } else {
                 // Force bit 4 to always be set.
@@ -524,13 +516,21 @@ impl Arm7TDMI {
 
                 // Set flag bits.
                 if opcode & (1 << 19) != 0 {
+                    // println!("MSR to change flag bits with {rm:X}");
                     source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
                 }
                 // Set control bits.
                 if opcode & (1 << 16) != 0 {
+                    // println!("MSR to change control bits with {rm:X}");
                     source_psr.set_cpsr((rm & 0xFF) | (source_psr.cpsr() & !0xFF));
                 }
             }
+
+            // if PSR {
+            //     println!("changing SPSR of {current_mode:?}\n");
+            // } else {
+            //     println!("changing CPSR\n");
+            // }
 
             // Assign to correct PSR.
             match PSR {
@@ -913,6 +913,9 @@ impl Arm7TDMI {
             return;
         }
 
+        // println!("SWAPPING REGS: old = {current_mode:?} with new = {new_mode:?}");
+        // println!("SPSR_old: {:X}, regs_old {:X?}", self.spsr.0, self.regs);
+
         let spsr = self.spsr;
         match current_mode {
             Mode::Fiq => self.banked_regs.fiq_regs.0 = spsr,
@@ -939,6 +942,9 @@ impl Arm7TDMI {
             self.banked_regs[current_mode].1.copy_from_slice(&self.regs[13..=14]);
             self.regs[13..=14].copy_from_slice(&self.banked_regs[new_mode].1);
         }
+
+        // println!("SPSR_new: {:X}, regs_new {:X?}\n", self.spsr.0, self.regs);
+
         // if current_mode != Mode::Fiq {
         //     let cur_reg_set = &mut self.banked_regs[current_mode];
         //     cur_reg_set.0 = self.spsr;

@@ -76,6 +76,10 @@ impl Arm7TDMI {
             _ => unreachable!(),
         };
 
+        if rd == 4 {
+            println!("FORMAT 3: {:X}", self.regs[rd]);
+        }
+
         // If NOT cmp.
         if (opcode >> 11) & 0x3 != 0b01 {
             self.cpsr.set_z(self.regs[rd] == 0);
@@ -87,6 +91,10 @@ impl Arm7TDMI {
     pub fn alu_ops(&mut self, opcode: u16) {
         let rd = opcode as usize & 0x7;
         let rs = (opcode as usize >> 3) & 0x7;
+
+        if rd == 4 {
+            println!("rd == 4, r4 = {:X}, rs == {rs}, r{rs} = {:X}, opcode = {:b}", self.regs[rd], self.regs[rs], (opcode >> 6) & 0xF);
+        }
 
         // If intermediate: TST, CMP, CMN.
         let mut intmd = false;
@@ -374,6 +382,10 @@ impl Arm7TDMI {
             } else {
                 address -= 4;
                 self.bus.write32(address, self.regs[*r]);
+
+                if *r == 4 && self.regs[*r] == 0x6C {
+                    println!("PUSH r4! {:X}", self.regs[15]);
+                }
             }
         }
 
