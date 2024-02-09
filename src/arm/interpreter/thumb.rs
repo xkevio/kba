@@ -150,7 +150,7 @@ impl Arm7TDMI {
         // Branch exchange.
         if op == 0b11 {
             let mut addr = if !h2 { self.regs[rs] } else { self.regs[rs + 8] };
-            addr += ((rs + 8) == 15) as u32 * 4;
+            addr += ((rs + 8) == 15 && h2) as u32 * 4;
 
             // Bit 0 of Rn decides decoding of subsequent instructions.
             if addr & 1 == 0 {
