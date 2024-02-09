@@ -47,6 +47,9 @@ pub struct Ppu {
     pub bldalpha: BLDALPHA,
     pub bldy: BLDY,
 
+    /// Mosaic sizes for BG and OBJ.
+    pub mosaic: MOSAIC,
+
     /// Window X horizontal and vertical dimensions.
     pub winxh: [u16; 2],
     pub winxv: [u16; 2],
@@ -800,6 +803,7 @@ impl Mcu for Ppu {
             0x0046 => self.winxv[1] = value,
             0x0048 => self.winin.set_winin(value),
             0x004A => self.winout.set_winout(value),
+            0x004C => self.mosaic.set_mosaic(value),
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),
@@ -848,7 +852,8 @@ impl Mcu for Ppu {
             0x0042 => self.winxh[1],
             0x0044 => self.winxv[0],
             0x0046 => self.winxv[1],
-            0x0048..=0x0050 => self.read16(_address),
+            0x004C => self.mosaic.mosaic(),
+            0x0048..=0x004A | 0x0050 => self.read16(_address),
             0x0052 => self.bldalpha.bldalpha(),
             0x0054 => self.bldy.bldy(),
             _ => 0,
@@ -993,5 +998,17 @@ bitfield! {
         pub obj_win_bg3: bool @ 11,
         pub obj_win_obj: bool @ 12,
         pub obj_win_col: bool @ 13,
+    }
+}
+
+bitfield! {
+    /// **MOSAIC - Mosaic Sizes** (w).
+    #[derive(Clone, Copy, Default)]
+    pub struct MOSAIC(pub u16) {
+        pub mosaic: u16 @ ..,
+        pub bg_mosaic_h: u8 @ 0..=3,
+        pub bg_mosaic_v: u8 @ 4..=7,
+        pub obj_mosaic_h: u8 @ 8..=11,
+        pub obj_mosaic_v: u8 @ 12..=15,
     }
 }
