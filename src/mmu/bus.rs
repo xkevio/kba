@@ -217,7 +217,7 @@ impl Mcu for Bus {
             0x02 => self.wram[address as usize % 0x0004_0000] = value,
             0x03 => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
             0x04 => match address - 0x0400_0000 {
-                addr @ (0x0000..=0x004B | 0x0050..=0x0054) => self.ppu.write8(addr, value),
+                addr @ (0x0000..=0x004D | 0x0050..=0x0054) => self.ppu.write8(addr, value),
                 addr @ 0x00B0..=0x00DF => self.dma_channels.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
                 0x0200 => set_bits!(self.ie.0, 0..=7, value),
