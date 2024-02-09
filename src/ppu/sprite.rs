@@ -111,7 +111,7 @@ impl Sprite {
             (2, Vertical) => 16,
             (3, Square | Horizontal) => 64,
             (3, Vertical) => 32,
-            _ => unreachable!(),
+            _ => 0, // todo: invalid obj shape shouldnt panic, just dont draw
         }
     }
 
@@ -127,7 +127,7 @@ impl Sprite {
             (2, Horizontal) => 16,
             (3, Square | Vertical) => 64,
             (3, Horizontal) => 32,
-            _ => unreachable!(),
+            _ => 0, // todo: invalid obj shape shouldnt panic, just dont draw
         }
     }
 }

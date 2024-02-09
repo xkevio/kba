@@ -5,12 +5,6 @@ use std::ops::{Index, IndexMut};
 #[derive(Default, Clone, Copy)]
 pub struct DMAChannels([DMA; 4]);
 
-impl DMAChannels {
-    pub fn any_in_progress(&self) -> bool {
-        (0..4).any(|ch| self[ch].enable)
-    }
-}
-
 impl Mcu for DMAChannels {
     fn read16(&mut self, address: u32) -> u16 {
         match address {

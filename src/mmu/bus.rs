@@ -42,10 +42,6 @@ pub struct Bus {
     pub game_pak: GamePak,
 
     pub halt: bool,
-    pub dma_in_progress: [bool; 4],
-
-    pub cpu_r: [u32; 16],
-    pub state: bool,
 }
 
 impl Default for Bus {
@@ -69,23 +65,19 @@ impl Default for Bus {
             game_pak: GamePak::default(),
 
             halt: false,
-            dma_in_progress: [false; 4],
-
-            cpu_r: [0; 16],
-            state: false,
         }
     }
 }
 
 impl Bus {
-    pub fn tick(&mut self, cycles: &mut usize) {
+    pub fn tick(&mut self, cycles: usize) {
         self.ppu.cycle(
             &*self.vram, 
             &self.palette_ram, 
             &self.oam, 
             &mut self.iff,
         );
-        self.timers.tick(&mut self.iff, *cycles);
+        self.timers.tick(&mut self.iff, cycles);
 
         /* 
         The following DMA checks can still be optimized if they are only called
@@ -96,28 +88,25 @@ impl Bus {
         the borrow-checker into the PPU state machine.
         */
 
-        // If any DMA is in progress
-        if self.dma_in_progress.iter().all(|c| *c == false) {
-            // On state/mode change.
-            if self.ppu.prev_mode != self.ppu.current_mode {
-                use crate::ppu::lcd::Mode;
-                match self.ppu.current_mode {
-                    Mode::HBlank => self.dma_transfer(StartTiming::HBlank, cycles),
-                    Mode::VBlank => self.dma_transfer(StartTiming::VBlank, cycles),
-                    Mode::HDraw => {},
-                }
-    
-                self.ppu.prev_mode = self.ppu.current_mode;
+        // On state/mode change.
+        if self.ppu.prev_mode != self.ppu.current_mode {
+            use crate::ppu::lcd::Mode;
+            match self.ppu.current_mode {
+                Mode::HBlank => self.dma_transfer(StartTiming::HBlank),
+                Mode::VBlank => self.dma_transfer(StartTiming::VBlank),
+                Mode::HDraw => {},
             }
-    
-            // On enable transition for immediate DMAs.
-            if (0..4).any(|ch| self.dma_channels[ch].enable_edge()) {
-                self.dma_transfer(StartTiming::Immediate, cycles);
-            }
+
+            self.ppu.prev_mode = self.ppu.current_mode;
+        }
+
+        // On enable transition for immediate DMAs.
+        if (0..4).any(|ch| self.dma_channels[ch].enable_edge()) {
+            self.dma_transfer(StartTiming::Immediate);
         }
     }
 
-    fn dma_transfer(&mut self, dma_type: StartTiming, cycles: &mut usize) {
+    fn dma_transfer(&mut self, dma_type: StartTiming) {
         let channels = self.dma_channels;
 
         for ch in 0..4 {
@@ -142,8 +131,6 @@ impl Bus {
                     || start_timing == dma_type && self.ppu.dispstat.vblank() 
                     // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
                 {
-                    self.dma_in_progress[ch] = true;
-
                     for _ in 0..word_count {
                         if channels[ch].transfer_type {
                             let data = self.read32(src_addr);
@@ -153,9 +140,6 @@ impl Bus {
                             self.write16(dst_addr, data);
                         }
                         
-                        self.tick(cycles);
-                        *cycles += 1;
-
                         src_addr = match src_addr_control {
                             AddrControl::Increment => src_addr + addr_delta,
                             AddrControl::Decrement => src_addr - addr_delta,
@@ -178,45 +162,18 @@ impl Bus {
                     }
 
                     // self.ppu.vid_capture = false;
-                    self.dma_in_progress[ch] = false;
                     self.dma_channels[ch].src = src_addr;
                     self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
                 }
             }
         }
     }
-
-    // fn open_bus<const ARM: bool>(&mut self, pc: u32) -> u32 {
-    //     if ARM {
-    //         self.read32(pc + 8)
-    //     } else {
-    //         match pc >> 24 {
-    //             0x02 | 0x05 | 0x06 | 0x08..=0x0D => {
-    //                 ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 4) as u32)
-    //             }
-    //             0x00 | 0x07 => {
-    //                 if pc % 4 == 0 {
-    //                     ((self.read16(pc + 6) as u32) << 16) | (self.read16(pc + 4) as u32)
-    //                 } else {
-    //                     ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 2) as u32)
-    //                 }
-    //             }
-    //             _ => {
-    //                 if pc % 4 == 0 {
-    //                     ((self.read16(pc + 2) as u32) << 16) | (self.read16(pc + 4) as u32)
-    //                 } else {
-    //                     ((self.read16(pc + 4) as u32) << 16) | (self.read16(pc + 2) as u32)
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 impl Mcu for Bus {
     #[rustfmt::skip]
     fn read8(&mut self, address: u32) -> u8 {
-        let a = match address >> 24 {
+        match address >> 24 {
             0x00 if address < 0x4000 => self.bios[address as usize],
             0x02 => self.wram[address as usize % 0x0004_0000],
             0x03 => self.wram[(address as usize % 0x0000_8000) + 0x0004_0000],
@@ -251,14 +208,7 @@ impl Mcu for Bus {
                 }
             }
             _ => 0,
-        };
-
-        if a == 0x6C {
-            println!("possible 0x6C read detected");
-            println!("-> {:X?}", self.cpu_r);
         }
-
-        a
     }
 
     #[rustfmt::skip]
@@ -278,26 +228,13 @@ impl Mcu for Bus {
                 0x0209 => set_bits!(self.ime.0, 8..=15, value),
                 0x020A => set_bits!(self.ime.0, 16..=23, value),
                 0x020B => set_bits!(self.ime.0, 24..=31, value),
-                0x0301 => {
-                    self.halt = (value >> 7) == 0;
-                    // if self.halt {
-                        // println!("Entering HALT mode!");
-                    // }
-                },
+                0x0301 => self.halt = (value >> 7) == 0,
                 _ => {}
             },
             0x05 => self.palette_ram[address as usize % 0x400] = value,
-            0x06 => {
-                println!("{:X} | VRAM write to {address:X} with {value:X}, r3: {:X}, r4: {:X}", self.cpu_r[15], self.cpu_r[3], self.cpu_r[4]);
-                self.vram[address as usize % 0x0001_8000] = value;
-            },
+            0x06 => self.vram[address as usize % 0x0001_8000] = value,
             0x07 => self.oam[address as usize % 0x400] = value,
-            0x0E..=0x0F => {
-                if value != 0x00 {
-                    print!("{}", value as char);
-                }
-                self.game_pak.sram[address as usize % 0x0001_0000] = value;
-            },
+            0x0E..=0x0F => self.game_pak.sram[address as usize % 0x0001_0000] = value,
             _ => {} // eprintln!("Write to ROM/unknown addr: {address:X}"),
         }
     }

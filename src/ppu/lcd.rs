@@ -740,14 +740,8 @@ impl Mcu for Ppu {
 
     fn write16(&mut self, address: u32, value: u16) {
         match address {
-            0x0000 => {
-                // println!("WRITE TO DISPCNT: {value:X}");
-                self.dispcnt.set_dispcnt(value);
-            },
-            0x0004 => {
-                println!("WRITE TO DISPSTAT: {:X}", value & !0b111);
-                self.dispstat.set_dispstat((value & !0b111) | self.dispstat.0 & 0b111);
-            },
+            0x0000 => self.dispcnt.set_dispcnt(value),
+            0x0004 => self.dispstat.set_dispstat((value & !0b111) | self.dispstat.0 & 0b111),
             0x0008 => self.bgxcnt[0].set_bg_control(value),
             0x000A => self.bgxcnt[1].set_bg_control(value),
             0x000C => self.bgxcnt[2].set_bg_control(value),
@@ -805,10 +799,7 @@ impl Mcu for Ppu {
             0x0044 => self.winxv[0] = value,
             0x0046 => self.winxv[1] = value,
             0x0048 => self.winin.set_winin(value),
-            0x004A => {
-                // println!("LY: {:X} | WINOUT: {:X}", self.vcount.ly(), value);
-                self.winout.set_winout(value);
-            },
+            0x004A => self.winout.set_winout(value),
             0x0050 => self.bldcnt.set_bldcnt(value),
             0x0052 => self.bldalpha.set_bldalpha(value),
             0x0054 => self.bldy.set_bldy(value),

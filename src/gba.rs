@@ -29,7 +29,7 @@ impl Gba {
             self.cpu.cycle();
         }
 
-        self.cpu.bus.tick(&mut self.cycles);
+        self.cpu.bus.tick(self.cycles);
         self.cycles += 1;
     }
 }

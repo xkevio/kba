@@ -1,14 +1,22 @@
-use std::{collections::HashMap, ops::{Index, IndexMut}};
+use std::ops::{Index, IndexMut};
 
 use crate::{
     arm::arr_with, box_arr, fl, mmu::{bus::Bus, game_pak::GamePak, Mcu}
 };
-use proc_bitfield::{bitfield, Bit, ConvRaw};
+use proc_bitfield::{bitfield, ConvRaw};
 
 /// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
 type Spsr = Cpsr;
 /// Each mode has its own banked registers (mostly r13 and r14).
-type BankedRegisters<const N: usize> = (Spsr, [u32; N]);
+#[derive(Default, Clone, Copy)]
+struct BankedRegisters { spsr: Spsr, bank: [u32; 7] }
+
+/// Initialize `BankedRegister` with SPSR and SP while filling the rest.
+macro_rules! bank {
+    (spsr: $spsr:expr, sp: $sp:expr) => {
+        BankedRegisters { spsr: $spsr, bank: arr_with(5, $sp) }
+    };
+}
 
 // Include the generated LUT at compile time.
 include!(concat!(env!("OUT_DIR"), "/arm_instructions.rs"));
@@ -52,18 +60,18 @@ pub enum Mode {
     System = 0b11111,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 struct Registers {
-    pub sys_regs: BankedRegisters<2>,
-    pub und_regs: BankedRegisters<2>,
-    pub abt_regs: BankedRegisters<2>,
-    pub svc_regs: BankedRegisters<2>,
-    pub irq_regs: BankedRegisters<2>,
-    pub fiq_regs: BankedRegisters<7>,
+    pub sys_regs: BankedRegisters,
+    pub und_regs: BankedRegisters,
+    pub abt_regs: BankedRegisters,
+    pub svc_regs: BankedRegisters,
+    pub irq_regs: BankedRegisters,
+    pub fiq_regs: BankedRegisters,
 }
 
 impl Index<Mode> for Registers {
-    type Output = BankedRegisters<2>;
+    type Output = BankedRegisters;
 
     fn index(&self, index: Mode) -> &Self::Output {
         match index {
@@ -72,7 +80,7 @@ impl Index<Mode> for Registers {
             Mode::Supervisor => &self.svc_regs,
             Mode::Abort => &self.abt_regs,
             Mode::Undefined => &self.und_regs,
-            Mode::Fiq => unreachable!(),
+            Mode::Fiq => &self.fiq_regs,
         }
     }
 }
@@ -85,7 +93,7 @@ impl IndexMut<Mode> for Registers {
             Mode::Supervisor => &mut self.svc_regs,
             Mode::Abort => &mut self.abt_regs,
             Mode::Undefined => &mut self.und_regs,
-            Mode::Fiq => unreachable!(),
+            Mode::Fiq => &mut self.fiq_regs,
         }
     }
 }
@@ -156,12 +164,12 @@ impl Arm7TDMI {
 
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
-            sys_regs: (Cpsr(0x1F), [0x0300_7F00, 0]),
-            und_regs: (Cpsr(0x1F), [0x0300_7FF0, 0]),
-            abt_regs: (Cpsr(0x1F), [0x0300_7FF0, 0]),
-            svc_regs: (Cpsr(0x1F), [0x0300_7FE0, 0]),
-            irq_regs: (Cpsr(0x1F), [0x0300_7FA0, 0]),
-            fiq_regs: (Cpsr(0x1F), arr_with(5, 0x0300_7FF0)),
+            sys_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7F00),
+            und_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
+            abt_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
+            svc_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FE0),
+            irq_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FA0),
+            fiq_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
         };
 
         Self {
@@ -170,15 +178,12 @@ impl Arm7TDMI {
             bus,
             spsr: Cpsr(0x1F),
             banked_regs,
-            ..Default::default()
+            branch: false,
         }
     }
 
     /// Cycle through an instruction with 1 CPI.
     pub fn cycle(&mut self) {
-        self.bus.cpu_r.copy_from_slice(&self.regs);
-        self.bus.state = if self.cpsr.state() == State::Arm { true } else { false };
-
         match self.cpsr.state() {
             State::Arm => {
                 let opcode = self.bus.read32(self.regs[15]);
@@ -187,16 +192,11 @@ impl Arm7TDMI {
                 let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
                 if self.cond(cond as u8) {
-                    // println!("PC: {:08X}", self.regs[15]);
-                    // println!(" // {:08X?}", self.regs);
-
                     ARM_INSTRUCTIONS[op_index as usize](self, opcode);
                 }
             }
             State::Thumb => {
                 let opcode = self.bus.read16(self.regs[15]);
-                // println!("PC: {:08X}", self.regs[15]);
-                // println!(" // {:08X?}", self.regs);
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
@@ -480,9 +480,11 @@ impl Arm7TDMI {
 
     /// PSR Transfer. Transfer contents of CPSR/SPSR between registers.
     pub fn psr_transfer<const I: bool, const PSR: bool>(&mut self, opcode: u32) {
+        // Get current mode before possible CPSR change.
         let Ok(current_mode) = self.cpsr.mode() else {
             return;
         };
+
         let mut source_psr = match PSR {
             true if (current_mode != Mode::User || current_mode != Mode::System) => self.spsr,
             _ => self.cpsr,
@@ -501,14 +503,8 @@ impl Arm7TDMI {
                 self.barrel_shifter::<I>(opcode as u16).0
             };
 
-            // Get current mode before possible CPSR change.
-            // let Ok(current_mode) = self.cpsr.mode() else {
-            //     return;
-            // };
-
             // User mode can only change flag bits.
             if self.cpsr.mode().is_ok_and(|mode| mode == Mode::User) {
-                // println!("MSR from user mode to change flag bits with {rm:X}");
                 source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
             } else {
                 // Force bit 4 to always be set.
@@ -516,22 +512,13 @@ impl Arm7TDMI {
 
                 // Set flag bits.
                 if opcode & (1 << 19) != 0 {
-                    // println!("MSR to change flag bits with {rm:X}");
                     source_psr.set_cpsr((rm & 0xFF00_0000) | (source_psr.cpsr() & 0x00FF_FFFF));
                 }
                 // Set control bits.
                 if opcode & (1 << 16) != 0 {
-                    // println!("MSR to change control bits with {rm:X}");
                     source_psr.set_cpsr((rm & 0xFF) | (source_psr.cpsr() & !0xFF));
                 }
             }
-
-            // if PSR {
-            //     println!("changing SPSR of {current_mode:?}\n");
-            // } else {
-            //     println!("changing CPSR\n");
-            // }
-
             // Assign to correct PSR.
             match PSR {
                 true if (current_mode != Mode::User || current_mode != Mode::System) => self.spsr = source_psr,
@@ -674,7 +661,6 @@ impl Arm7TDMI {
 
         // Load from memory if L, else store register into memory.
         if L {
-            self.branch = rd == 15;
             if !S {
                 self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror);
             } else {
@@ -685,9 +671,13 @@ impl Arm7TDMI {
                 }
             }
         } else {
-            self.bus.write16(aligned_addr, self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 });
+            self.bus.write16(
+                aligned_addr,
+                self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 }
+            );
         }
-
+        
+        self.branch = rd == 15 && L;
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
             self.regs[rn] = base_with_offset;
         }
@@ -766,14 +756,7 @@ impl Arm7TDMI {
 
                 match user_bank {
                     false => self.regs[*r] = self.bus.read32(aligned_addr(address)),
-                    true => {
-                        self.banked_regs.sys_regs.1[*r] = self.bus.read32(aligned_addr(address));
-                        // self.banked_regs
-                        //     .entry(Mode::System)
-                        //     .and_modify(|(_, regs)| {
-                        //         regs[*r] = self.bus.read32(aligned_addr(address))
-                        //     });
-                    }
+                    true => self.banked_regs.sys_regs.bank[*r] = self.bus.read32(aligned_addr(address)),
                 }
             } else {
                 // Edge case: rb in reg list and not first.
@@ -794,7 +777,7 @@ impl Arm7TDMI {
                         if !user_bank {
                             self.regs[*r] + if *r == 15 { 12 } else { 0 }
                         } else {
-                            self.banked_regs.sys_regs.1[*r]
+                            self.banked_regs.sys_regs.bank[*r]
                         },
                     );
                 }
@@ -913,54 +896,36 @@ impl Arm7TDMI {
             return;
         }
 
-        // println!("SWAPPING REGS: old = {current_mode:?} with new = {new_mode:?}");
-        // println!("SPSR_old: {:X}, regs_old {:X?}", self.spsr.0, self.regs);
-
+        // Store previous SPSR in temp variable.
         let spsr = self.spsr;
-        match current_mode {
-            Mode::Fiq => self.banked_regs.fiq_regs.0 = spsr,
-            _ => self.banked_regs[current_mode].0 = spsr,
-        }
-
+        
+        // Exchange SPSR depending on mode.
+        // If FIQ, take from fiq_regs. If System or User, read CPSR.
+        self.banked_regs[current_mode].spsr = spsr;
         self.spsr = match new_mode {
             Mode::System | Mode::User => self.cpsr,
-            Mode::Fiq => self.banked_regs.fiq_regs.0,
-            _ => self.banked_regs[new_mode].0
+            _ => self.banked_regs[new_mode].spsr,
         };
 
+        // If we are switching from FIQ: load regs 8-14 back into FIQ bank.
+        // Load old system registers back in before switching to new mode register.
         if current_mode == Mode::Fiq {
-            self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
-            self.regs[8..=14].copy_from_slice(&self.banked_regs.sys_regs.1[8..=14]);
+            self.banked_regs[current_mode].bank.copy_from_slice(&self.regs[8..=14]);
+            self.regs[8..=14].copy_from_slice(&self.banked_regs.sys_regs.bank[8..=14]);
         }
 
+        // If new mode is FIQ: copy current registers into system bank.
+        // Then, load FIQ regs into registers. 
         if new_mode == Mode::Fiq {
-            self.banked_regs.sys_regs.1[8..=14].copy_from_slice(&self.regs[8..=14]);
-            self.regs[8..=14].copy_from_slice(&self.banked_regs.fiq_regs.1);
+            self.banked_regs.sys_regs.bank[8..=14].copy_from_slice(&self.regs[8..=14]);
+            self.regs[8..=14].copy_from_slice(&self.banked_regs[new_mode].bank);
         }
 
-        if current_mode != Mode::Fiq && new_mode != Mode::Fiq {
-            self.banked_regs[current_mode].1.copy_from_slice(&self.regs[13..=14]);
-            self.regs[13..=14].copy_from_slice(&self.banked_regs[new_mode].1);
-        }
+        // In all other cases: just swap r13 and r14 between old and new mode.
+        self.banked_regs[current_mode].bank[5] = self.regs[13];
+        self.banked_regs[current_mode].bank[6] = self.regs[14];
 
-        // println!("SPSR_new: {:X}, regs_new {:X?}\n", self.spsr.0, self.regs);
-
-        // if current_mode != Mode::Fiq {
-        //     let cur_reg_set = &mut self.banked_regs[current_mode];
-        //     cur_reg_set.0 = self.spsr;
-        //     cur_reg_set.1.copy_from_slice(&self.regs[13..=14]);
-        // } else {
-        //     self.banked_regs.fiq_regs.0 = self.spsr;
-        //     self.banked_regs.fiq_regs.1.copy_from_slice(&self.regs[8..=14]);
-        // }
-
-        // if new_mode != Mode::Fiq {
-        //     let new_reg_set = &mut self.banked_regs[new_mode];
-        //     self.spsr = new_reg_set.0;
-        //     self.regs[13..=14].copy_from_slice(&new_reg_set.1);
-        // } else {
-        //     self.spsr = self.banked_regs.fiq_regs.0;
-        //     self.regs[8..=14].copy_from_slice(&self.banked_regs.fiq_regs.1);
-        // }
+        self.regs[13] = self.banked_regs[new_mode].bank[5];
+        self.regs[14] = self.banked_regs[new_mode].bank[6];
     }
 }

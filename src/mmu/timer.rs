@@ -35,7 +35,6 @@ impl Timers {
             }
 
             if tm_overflow[id] && self[id].irq {
-                // println!("Requesting timer {id} IRQ!");
                 iff.set_timer(id);
             }
         }
@@ -132,11 +131,8 @@ impl Timer {
 
         // Reload counter value upon change of start bit from 0 -> 1.
         if !self.prev_start && self.start {
-            // println!("RELOAD BECAUSE {} to {} from {value:X}", self.prev_start, self.start);
             self.counter = self.reload;
         }
-
-        // println!("Write to TM{ID}CNT_H: {value:X}");
 
         self.prev_start = self.start;
     }
