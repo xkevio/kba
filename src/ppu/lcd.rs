@@ -348,8 +348,13 @@ impl Ppu {
                 ]))
             };
 
-            if px_idx != 0 {
-                self.current_bg_line[BG][x] = Some(px);
+            let mosaic_h = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_h() as usize } else { 0 };
+            let _mosaic_v = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_v() as usize } else { 0 };
+
+            if x % (mosaic_h + 1) == 0 {
+                self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
+            } else {
+                self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
             }
         }
     }
@@ -505,12 +510,20 @@ impl Ppu {
                     ]))
                 };
 
-                if px_idx != 0 {
-                    self.current_sprite_line[screen_x] = Obj { 
-                        px: Some(px), 
-                        prio: sprite.prio, 
-                        alpha: sprite.obj_mode == ObjMode::SemiTransparent 
-                    };
+                let mosaic_h = if sprite.mosaic { self.mosaic.obj_mosaic_h() as usize } else { 0 };
+                let _mosaic_v = if sprite.mosaic { self.mosaic.obj_mosaic_v() as usize } else { 0 };
+
+                if screen_x % (mosaic_h + 1) == 0 {
+                    self.current_sprite_line[screen_x] = if px_idx != 0 { 
+                        Obj { 
+                            px: Some(px), 
+                            prio: sprite.prio, 
+                            alpha: sprite.obj_mode == ObjMode::SemiTransparent 
+                        }
+                    } else { Obj::default() };
+                } else {
+                    self.current_sprite_line[screen_x] = 
+                        self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
                 }
             }
         }
