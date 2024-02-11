@@ -49,6 +49,8 @@ pub struct Ppu {
 
     /// Mosaic sizes for BG and OBJ.
     pub mosaic: MOSAIC,
+    #[derivative(Default(value = "[[None; 512]; 4]"))]
+    pub bg_mosaic_v_px: [[Option<u16>; 512]; 4],
 
     /// Window X horizontal and vertical dimensions.
     pub winxh: [u16; 2],
@@ -349,12 +351,19 @@ impl Ppu {
             };
 
             let mosaic_h = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_h() as usize } else { 0 };
-            let _mosaic_v = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_v() as usize } else { 0 };
+            let mosaic_v = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_v() as u16 } else { 0 };
 
-            if x % (mosaic_h + 1) == 0 {
+            // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
+            if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
                 self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
+                self.bg_mosaic_v_px[BG][x] = (px_idx != 0).then_some(px);
             } else {
-                self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
+                    self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                    self.bg_mosaic_v_px[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                } else {
+                    self.current_bg_line[BG][x] = self.bg_mosaic_v_px[BG][x];
+                }
             }
         }
     }
