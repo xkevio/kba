@@ -50,7 +50,9 @@ pub struct Ppu {
     /// Mosaic sizes for BG and OBJ.
     pub mosaic: MOSAIC,
     #[derivative(Default(value = "[[None; 512]; 4]"))]
-    pub bg_mosaic_v_px: [[Option<u16>; 512]; 4],
+    bg_mosaic_v_buf: [[Option<u16>; 512]; 4],
+    #[derivative(Default(value = "[Obj::default(); 512]"))]
+    obj_mosaic_v_buf: [Obj; 512],
 
     /// Window X horizontal and vertical dimensions.
     pub winxh: [u16; 2],
@@ -356,13 +358,13 @@ impl Ppu {
             // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
             if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
                 self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
-                self.bg_mosaic_v_px[BG][x] = (px_idx != 0).then_some(px);
+                self.bg_mosaic_v_buf[BG][x] = (px_idx != 0).then_some(px);
             } else {
                 if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
                     self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
-                    self.bg_mosaic_v_px[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                    self.bg_mosaic_v_buf[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
                 } else {
-                    self.current_bg_line[BG][x] = self.bg_mosaic_v_px[BG][x];
+                    self.current_bg_line[BG][x] = self.bg_mosaic_v_buf[BG][x];
                 }
             }
         }
@@ -520,9 +522,10 @@ impl Ppu {
                 };
 
                 let mosaic_h = if sprite.mosaic { self.mosaic.obj_mosaic_h() as usize } else { 0 };
-                let _mosaic_v = if sprite.mosaic { self.mosaic.obj_mosaic_v() as usize } else { 0 };
+                let mosaic_v = if sprite.mosaic { self.mosaic.obj_mosaic_v() as usize } else { 0 };
 
-                if screen_x % (mosaic_h + 1) == 0 {
+                // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
+                if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
                     self.current_sprite_line[screen_x] = if px_idx != 0 { 
                         Obj { 
                             px: Some(px), 
@@ -530,9 +533,14 @@ impl Ppu {
                             alpha: sprite.obj_mode == ObjMode::SemiTransparent 
                         }
                     } else { Obj::default() };
+                    self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
                 } else {
-                    self.current_sprite_line[screen_x] = 
-                        self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                    if self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
+                        self.current_sprite_line[screen_x] = self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                        self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
+                    } else {
+                        self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
+                    }
                 }
             }
         }
