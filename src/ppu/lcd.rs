@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use derivative::Derivative;
-use proc_bitfield::{bitfield, Bit, BitRange, ConvRaw};
+use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
@@ -307,7 +307,7 @@ impl Ppu {
         let bg_hofs = self.bgxhofs[BG];
         let bg_vofs = self.bgxvofs[BG];
 
-        let y_off = (self.vcount.ly() as u16 + bg_vofs) % 256;
+        let y_off = self.vcount.ly() as u16 + bg_vofs;
         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
 
         for x in 0..LCD_WIDTH {
@@ -324,7 +324,7 @@ impl Ppu {
             // Additionally, offset address by tile with x and y akin to (width * y + x).
             let map_data = bg_cnt.screen_base_block() as u32 * 0x800
                 + sbb_off * 0x800
-                + 2 * (32 * (y_off as u32 / 8) + (x_off as u32 / 8));
+                + 2 * (32 * ((y_off % 256) as u32 / 8) + (x_off as u32 / 8));
 
             let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
@@ -357,19 +357,22 @@ impl Ppu {
                 ]))
             };
 
-            let mosaic_h = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_h() as usize } else { 0 };
-            let mosaic_v = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_v() as u16 } else { 0 };
+            let mosaic_h = self.mosaic.bg_mosaic_h() as usize;
+            let mosaic_v = self.mosaic.bg_mosaic_v() as u16;
 
-            // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
-            if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
-                self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
-                self.bg_mosaic_v_buf[BG][x] = (px_idx != 0).then_some(px);
+            if !bg_cnt.mosaic() && px_idx != 0 {
+                self.current_bg_line[BG][x] = Some(px);
             } else {
-                if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
-                    self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
-                    self.bg_mosaic_v_buf[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
+                    self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
+                    self.bg_mosaic_v_buf[BG][x] = (px_idx != 0).then_some(px);
                 } else {
-                    self.current_bg_line[BG][x] = self.bg_mosaic_v_buf[BG][x];
+                    if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
+                        self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                        self.bg_mosaic_v_buf[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                    } else {
+                        self.current_bg_line[BG][x] = self.bg_mosaic_v_buf[BG][x];
+                    }
                 }
             }
         }
@@ -526,31 +529,41 @@ impl Ppu {
                     ]))
                 };
 
-                let mosaic_h = if sprite.mosaic { self.mosaic.obj_mosaic_h() as usize } else { 0 };
-                let mosaic_v = if sprite.mosaic { self.mosaic.obj_mosaic_v() as usize } else { 0 };
+                let mosaic_h = self.mosaic.obj_mosaic_h() as usize;
+                let mosaic_v = self.mosaic.obj_mosaic_v() as usize;
 
-                // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
-                if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                    self.current_sprite_line[screen_x] = if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
-                        Obj { 
+                if !sprite.mosaic {
+                    if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
+                        self.current_sprite_line[screen_x] = Obj { 
                             px: Some(px), 
                             prio: sprite.prio, 
                             alpha: sprite.obj_mode == ObjMode::SemiTransparent,
                             window: sprite.obj_mode == ObjMode::Window,
-                        }
-                    } else { Obj::default() };
-                    self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
+                        };
+                    }
                 } else {
-                    if self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                        self.current_sprite_line[screen_x] = self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                    if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
+                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
+                            self.current_sprite_line[screen_x] = Obj { 
+                                px: Some(px), 
+                                prio: sprite.prio, 
+                                alpha: sprite.obj_mode == ObjMode::SemiTransparent,
+                                window: sprite.obj_mode == ObjMode::Window,
+                            };
+                        }
                         self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
                     } else {
-                        self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
+                        if self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
+                            self.current_sprite_line[screen_x] = self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                            self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
+                        } else {
+                            self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
+                        }
                     }
                 }
 
                 // If sprite has ObjWindow, don't draw and save (x, y) position.
-                if sprite.obj_mode == ObjMode::Window {
+                if sprite.obj_mode == ObjMode::Window && px_idx != 0 {
                     self.obj_window_buf.insert((screen_x, self.vcount.ly() as usize));
                 }
             }
@@ -563,13 +576,13 @@ impl Ppu {
 
         // Get bits 8..=11 to get bg-enable bits.
         let is_bg_enabled: u8 = bits!(self.dispcnt.0, 8..=11);
-        let _backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
+        let backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
 
         let mut bg_sorted = [0, 1, 2, 3];
         let mut render_line = vec![None; 512];
 
         bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
-        self.special_color_effect(palette_ram);
+        self.special_color_effect(backdrop);
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
@@ -583,7 +596,7 @@ impl Ppu {
                     .then_some(self.current_bg_line[prio][x])
                     .flatten();
 
-                // Windowing composition. TODO: OBJ Windows (+ SFX bit).
+                // Windowing composition. TODO: difference between these blocks?
                 let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
                     match win {
                         Window::Win0 | Window::Win1 => {
@@ -633,7 +646,7 @@ impl Ppu {
     /// Apply special color effects such as alpha blending, whitening or darkening.
     ///
     /// "Inspired" by https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
-    fn special_color_effect(&mut self, _palette_ram: &[u8]) {
+    fn special_color_effect(&mut self, backdrop: u16) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
 
@@ -644,7 +657,7 @@ impl Ppu {
 
         for x in 0..512 {
             // Top two layers (pixel, prio, bg, obj_alpha).
-            let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
+            let mut layers = ([backdrop; 2], [4u8; 2], [0usize; 2], false);
 
             let window = self.in_window(x, self.vcount.ly() as usize);
             let window_sfx = match window {
