@@ -1,5 +1,7 @@
+use std::collections::HashSet;
+
 use derivative::Derivative;
-use proc_bitfield::{bitfield, BitRange, ConvRaw};
+use proc_bitfield::{bitfield, Bit, BitRange, ConvRaw};
 use seq_macro::seq;
 
 use crate::{
@@ -60,6 +62,8 @@ pub struct Ppu {
 
     pub winin: WININ,
     pub winout: WINOUT,
+    /// All obj coordinates that have `ObjMode = Window`.
+    obj_window_buf: HashSet<(usize, usize)>,
 
     #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: Vec<Option<u16>>,
@@ -107,6 +111,7 @@ struct Obj {
     px: Option<u16>,
     prio: u8,
     alpha: bool,
+    window: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, PartialOrd, Ord, Eq)]
@@ -526,11 +531,12 @@ impl Ppu {
 
                 // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
                 if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                    self.current_sprite_line[screen_x] = if px_idx != 0 { 
+                    self.current_sprite_line[screen_x] = if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
                         Obj { 
                             px: Some(px), 
                             prio: sprite.prio, 
-                            alpha: sprite.obj_mode == ObjMode::SemiTransparent 
+                            alpha: sprite.obj_mode == ObjMode::SemiTransparent,
+                            window: sprite.obj_mode == ObjMode::Window,
                         }
                     } else { Obj::default() };
                     self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
@@ -541,6 +547,11 @@ impl Ppu {
                     } else {
                         self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
                     }
+                }
+
+                // If sprite has ObjWindow, don't draw and save (x, y) position.
+                if sprite.obj_mode == ObjMode::Window {
+                    self.obj_window_buf.insert((screen_x, self.vcount.ly() as usize));
                 }
             }
         }
@@ -594,7 +605,16 @@ impl Ppu {
 
                             sp_out.or(bg_out)
                         },
-                        Window::ObjWin => todo!(),
+                        Window::ObjWin => {
+                            // Check if obj layer is enabled in window.
+                            if self.winout.0 & (1 << 12) != 0 {
+                                // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
+                                sp.or_else(|| if self.winout.0 & (1 << (prio + 8)) != 0 { bg } else { None })
+                            } else {
+                                // Else, check if current bg layer is enabled and use that.
+                                (self.winout.0 & (1 << (prio + 8)) != 0).then_some(bg).flatten()
+                            }
+                        },
                     }
                 } else {
                     sp.or(bg)
@@ -604,6 +624,7 @@ impl Ppu {
             }
         }
 
+        self.obj_window_buf.clear();
         for x in 0..LCD_WIDTH {
             self.buffer[y * LCD_WIDTH + x] = render_line[x];
         }
@@ -626,6 +647,14 @@ impl Ppu {
             let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
 
             let window = self.in_window(x, self.vcount.ly() as usize);
+            let window_sfx = match window {
+                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => true,
+                Window::Win0 => self.winin.win0_col(),
+                Window::Win1 => self.winin.win1_col(),
+                Window::WinOut => self.winout.win_col_out(),
+                Window::ObjWin => self.winout.obj_win_col(),
+            };
+
             // Check if layer is actually activated inside of a window before using it for blending.
             let layer_in_win = |layer: usize| {
                 if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
@@ -633,7 +662,7 @@ impl Ppu {
                         Window::Win0 => self.winin.0 & (1 << layer) != 0,
                         Window::Win1 => self.winin.0 & (1 << (layer + 8)) != 0,
                         Window::WinOut => self.winout.0 & (1 << layer) != 0,
-                        Window::ObjWin => todo!(),
+                        Window::ObjWin => self.winout.0 & (1 << (layer + 8)) != 0,
                     }
                 } else {
                     true
@@ -695,7 +724,7 @@ impl Ppu {
                     );
                 }
                 self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]);
-            } else {
+            } else if window_sfx {
                 match color_effect {
                     ColorEffect::AlphaBlending => {
                         if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
@@ -741,6 +770,10 @@ impl Ppu {
             if x >= x1 && x < x2 && y >= y1 && y < y2 {
                 return if win == 0 { Window::Win0 } else { Window::Win1 };
             }
+        }
+
+        if self.dispcnt.obj_win() && self.obj_window_buf.contains(&(x, y)) {
+            return Window::ObjWin;
         }
 
         Window::WinOut
