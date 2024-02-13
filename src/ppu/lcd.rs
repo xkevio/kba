@@ -236,7 +236,7 @@ impl Ppu {
         self.update_bg_scanline(vram, palette_ram);
 
         // Render sprites by first collecting all sprites from OAM
-        // that are on this line, then drawing them. (todo: draw sprites for mode 3, 4, 5)
+        // that are on this line, then drawing them. (todo: draw sprites for mode 4, 5)
         self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
         self.current_rot_scale = Sprite::collect_rot_scale_params(oam);
         self.render_sprite_line(vram, palette_ram);
@@ -245,6 +245,17 @@ impl Ppu {
         // and don't use the line draw function.
         if self.dispcnt.bg_mode() < 3 {
             self.draw_line(palette_ram);
+        } else if self.dispcnt.bg_mode() == 3 {
+            let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
+            let line = self.current_sprite_line;
+
+            for (i, px) in line[..LCD_WIDTH].iter().enumerate() {
+                if let Some(obj_px) = px.px {
+                    self.buffer[(start / 2) + i] = Some(obj_px);
+                }
+            }
+        } else {
+            todo!("sprites in mode 4 and 5");
         }
     }
 
@@ -508,7 +519,7 @@ impl Ppu {
                 // In modes 3-5, only tile numbers 512-1023 may be used, lower memory is used for background.
                 let tile_addr = match self.dispcnt.bg_mode() < 3 {
                     true => 0x10000 + (tile_id as usize % 1024) * 32,
-                    false => 0x14000 + (tile_id as usize % 1024) * 32,
+                    false => 0x14000 + (tile_id as usize % 512) * 32,
                 };
 
                 let screen_x = spx_off as usize % 512;

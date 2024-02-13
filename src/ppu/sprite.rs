@@ -1,6 +1,8 @@
 use itertools::Itertools;
 use proc_bitfield::ConvRaw;
 
+use crate::gba::LCD_HEIGHT;
+
 pub struct Sprite {
     pub x: u16,
     pub y: u8,
@@ -51,25 +53,28 @@ impl Sprite {
 
             // Treat y as signed with [-127, 128].
             // Won't fully work for affine double sprite size.
-            let mut signed_start = sprite.y as i8;
+            let mut signed_start = sprite.y as i16;
+            signed_start -= if sprite.y >= 160 { 256 } else { 0 };
 
             // Double sprite size for LY check to include the lower half of double size sprites.
             let sprite_height =
-                sprite.height() << (sprite.rot_scale && sprite.double_or_disable) as u8;
+                (sprite.height() as i16) << (sprite.rot_scale && sprite.double_or_disable) as i16;
 
-            let signed_end = (signed_start as i16 + sprite_height as i16) as i8;
-            let wrapped_ly = ly as i8 as i16;
+            let signed_end = signed_start + sprite_height;
+            let wrapped_ly = ly as i16;
 
-            // TODO: simplify wrapped range check!
-            let contain = loop {
-                if signed_start == signed_end {
-                    break false;
-                } else if signed_start as i16 == wrapped_ly {
-                    break true;
-                } else {
-                    signed_start += 1;
-                }
-            };
+            let contain = wrapped_ly >= signed_start && wrapped_ly < signed_end;
+
+            // // TODO: simplify wrapped range check!
+            // let contain = loop {
+            //     if signed_start as i16 == signed_end {
+            //         break false;
+            //     } else if signed_start as i16 == wrapped_ly {
+            //         break true;
+            //     } else {
+            //         signed_start += 1;
+            //     }
+            // };
 
             if contain {
                 sprites.push(sprite);
