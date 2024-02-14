@@ -462,7 +462,7 @@ impl Ppu {
             }
 
             // Difference of y inside the sprite.
-            let y = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16);
+            let y = self.vcount.ly() as i16 - sprite.y as i8 as i16;
 
             // Use identity matrix for regular sprites and the correct params for affine.
             let (pa, pb, pc, pd) = match sprite.rot_scale {
@@ -474,15 +474,16 @@ impl Ppu {
             let height = sprite.height() << sprite.double_or_disable as u8;
 
             for spx in 0..width {
-                let spx_off = sprite.x + spx as u16;
-
                 // "Local" sprite coordinates within its bounding box.
-                let lx = (spx_off - sprite.x) as i16;
-                let ly = y as i16;
+                let signed_sprite_x = (sprite.x << 7) as i16 >> 7;
+                let sprite_x = if signed_sprite_x >= 240 { signed_sprite_x - 512 } else { signed_sprite_x };
+
+                let spx_off = sprite_x + spx as i16;
+                let x = spx as i16;
 
                 // Transform into texture space with affine transformation.
-                let mut tx = (pa * (lx - (width as i16 / 2)) + pb * (ly - (height as i16 / 2))) >> 8;
-                let mut ty = (pc * (lx - (width as i16 / 2)) + pd * (ly - (height as i16 / 2))) >> 8;
+                let mut tx = (pa * (x - (width as i16 / 2)) + pb * (y - (height as i16 / 2))) >> 8;
+                let mut ty = (pc * (x - (width as i16 / 2)) + pd * (y - (height as i16 / 2))) >> 8;
 
                 // Adjust sprite center.
                 tx += ((width as i16) / 2) >> sprite.double_or_disable as i16;
@@ -492,6 +493,15 @@ impl Ppu {
                 if tx < 0 || tx >= sprite.width() as i16 || ty < 0 || ty >= sprite.height() as i16 {
                     continue;
                 }
+
+                if spx_off < 0 || spx_off >= 240 {
+                    // dbg!(spx_off);
+                    continue;
+                }
+
+                // if sprite.prio > self.current_sprite_line[spx_off as usize].prio {
+                //     continue;
+                // }
 
                 // Operate in "tile space".
                 let tile_width = if sprite.h_flip && !sprite.rot_scale {
@@ -522,7 +532,7 @@ impl Ppu {
                     false => 0x14000 + (tile_id as usize % 512) * 32,
                 };
 
-                let screen_x = spx_off as usize % 512;
+                let screen_x = spx_off as usize;
                 let tile_off = if sprite.v_flip && !sprite.rot_scale { 7 - (ty as u16 % 8) } else { ty as u16 % 8 }
                     * 8 + if sprite.h_flip && !sprite.rot_scale { 7 - (tx as u16 % 8) } else { tx as u16 % 8 };
 

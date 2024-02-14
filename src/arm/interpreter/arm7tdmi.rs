@@ -159,24 +159,24 @@ impl Arm7TDMI {
         };
 
         // Skip BIOS.
-        regs[13] = 0x0300_7F00;
-        regs[15] = 0x0800_0000;
+        // regs[13] = 0x0300_7F00;
+        // regs[15] = 0x0800_0000;
 
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
-            sys_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7F00),
-            und_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
-            abt_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
-            svc_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FE0),
-            irq_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FA0),
-            fiq_regs: bank!(spsr: Cpsr(0x1F), sp: 0x0300_7FF0),
+            sys_regs: bank!(spsr: Cpsr(0), sp: 0),
+            und_regs: bank!(spsr: Cpsr(0), sp: 0),
+            abt_regs: bank!(spsr: Cpsr(0), sp: 0),
+            svc_regs: bank!(spsr: Cpsr(0), sp: 0),
+            irq_regs: bank!(spsr: Cpsr(0), sp: 0),
+            fiq_regs: bank!(spsr: Cpsr(0), sp: 0),
         };
 
         Self {
             regs,
-            cpsr: Cpsr(0x6000_001F),
+            cpsr: Cpsr(0x1F),
             bus,
-            spsr: Cpsr(0x1F),
+            spsr: Cpsr(0),
             banked_regs,
             branch: false,
         }
@@ -200,7 +200,6 @@ impl Arm7TDMI {
                 THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
             }
         }
-
 
         self.regs[15] += match self.cpsr.state() {
             State::Arm if !self.branch => 4,
