@@ -494,14 +494,10 @@ impl Ppu {
                     continue;
                 }
 
+                // keep for now to prevent overflow with screen_x
                 if spx_off < 0 || spx_off >= 240 {
-                    // dbg!(spx_off);
                     continue;
                 }
-
-                // if sprite.prio > self.current_sprite_line[spx_off as usize].prio {
-                //     continue;
-                // }
 
                 // Operate in "tile space".
                 let tile_width = if sprite.h_flip && !sprite.rot_scale {

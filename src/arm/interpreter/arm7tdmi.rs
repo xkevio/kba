@@ -143,7 +143,7 @@ impl From<State> for bool {
 impl Arm7TDMI {
     /// Initialize SP and PC to the correct values.
     pub fn new(rom: &[u8]) -> Self {
-        let mut regs = [0; 16];
+        let regs = [0; 16];
 
         // Resize ROM to 32 MB always for OOB reads.
         let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];
