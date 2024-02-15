@@ -462,7 +462,7 @@ impl Ppu {
             }
 
             // Difference of y inside the sprite.
-            let y = self.vcount.ly() as i16 - sprite.y as i8 as i16;
+            let y = self.vcount.ly() as i32 - sprite.y as i8 as i32;
 
             // Use identity matrix for regular sprites and the correct params for affine.
             let (pa, pb, pc, pd) = match sprite.rot_scale {
@@ -479,18 +479,18 @@ impl Ppu {
                 let sprite_x = if signed_sprite_x >= 240 { signed_sprite_x - 512 } else { signed_sprite_x };
 
                 let spx_off = sprite_x + spx as i16;
-                let x = spx as i16;
+                let x = spx as i32;
 
                 // Transform into texture space with affine transformation.
-                let mut tx = (pa * (x - (width as i16 / 2)) + pb * (y - (height as i16 / 2))) >> 8;
-                let mut ty = (pc * (x - (width as i16 / 2)) + pd * (y - (height as i16 / 2))) >> 8;
+                let mut tx = (pa as i32 * (x - (width as i32 / 2)) + pb as i32 * (y - (height as i32 / 2))) >> 8;
+                let mut ty = (pc as i32 * (x - (width as i32 / 2)) + pd as i32 * (y - (height as i32 / 2))) >> 8;
 
                 // Adjust sprite center.
-                tx += ((width as i16) / 2) >> sprite.double_or_disable as i16;
-                ty += ((height as i16) / 2) >> sprite.double_or_disable as i16;
+                tx += ((width as i32) / 2) >> sprite.double_or_disable as i32;
+                ty += ((height as i32) / 2) >> sprite.double_or_disable as i32;
 
                 // Disable sprite wrapping and repeating itself.
-                if tx < 0 || tx >= sprite.width() as i16 || ty < 0 || ty >= sprite.height() as i16 {
+                if tx < 0 || tx >= sprite.width() as i32 || ty < 0 || ty >= sprite.height() as i32 {
                     continue;
                 }
 
