@@ -615,61 +615,102 @@ impl Ppu {
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
-
-        // TODO: REFACTOR THIS BY GOING IN LOCKSTEP 
         for x in 0..512 {
             let win = self.in_window(x, y);
             let sp = self.current_sprite_line[x].px;
+            
+            let mut bg = None;
+            let mut bg_prio = u8::MAX;
 
-            for prio_layer in bg_sorted {
-                let bg = (is_bg_enabled & (1 << prio_layer) != 0)
-                    .then_some(self.current_bg_line[prio_layer][x])
-                    .flatten();
+            for prio_layer in bg_sorted.iter().filter(|&&x| is_bg_enabled & (1 << x) != 0) {
+                let cur_bg = self.current_bg_line[*prio_layer][x];
 
-                // Windowing composition. TODO: difference between these blocks?
-                let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                let bg_win = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
                     match win {
                         Window::Win0 | Window::Win1 => {
                             let offset = if win == Window::Win0 { 0 } else { 8 };
-                            // Check if obj layer is enabled in window.
-                            if self.winin.0 & (1 << (4 + offset)) != 0 {
-                                // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
-                                sp.or_else(|| if self.winin.0 & (1 << (prio_layer + offset)) != 0 { bg } else { None })
-                            } else {
-                                // Else, check if current bg layer is enabled and use that.
-                                (self.winin.0 & (1 << (prio_layer + offset)) != 0).then_some(bg).flatten()
-                            }
+                            (self.winin.0 & (1 << (prio_layer + offset)) != 0).then_some(cur_bg).flatten()
                         },
-                        Window::WinOut => {
-                            // Check if either obj layer or bg layer is enabled for WINOUT.
-                            // Use whichever is not None (either color 0 or layer disabled).
-                            let sp_out = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
-                            let bg_out = if self.winout.0 & (1 << prio_layer) != 0 { bg } else { None };
-
-                            sp_out.or(bg_out)
-                        },
-                        Window::ObjWin => {
-                            let sp_out = if self.winout.0 & (1 << 12) != 0 { sp } else { None };
-                            let bg_out = if self.winout.0 & (1 << (prio_layer + 8)) != 0 { bg } else { None };
-
-                            if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
-                                sp_out.or(bg_out)
-                            } else {
-                                // todo: all other cases
-                                bg_out.or(if is_bg_enabled & (1 << prio_layer) != 0 { sp_out } else { None })
-                            }
-                        },
+                        Window::ObjWin => (self.winout.0 & (1 << (prio_layer + 8)) != 0).then_some(cur_bg).flatten(),
+                        Window::WinOut => (self.winout.0 & (1 << prio_layer) != 0).then_some(cur_bg).flatten()
                     }
                 } else {
-                    if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
-                        sp.or(bg)
-                    } else {
-                        bg.or(if is_bg_enabled & (1 << prio_layer) != 0 { sp } else { None })
-                    }
+                    cur_bg
                 };
 
-                render_line[x] = render_line[x].or(final_px);
+                bg_prio = bg_prio.min(self.bgxcnt[*prio_layer].prio());
+                bg = bg.or(bg_win);
             }
+
+            let sp_win = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                match win {
+                    Window::Win0 | Window::Win1 => {
+                        let offset = if win == Window::Win0 { 0 } else { 8 };
+                        (self.winin.0 & (1 << (4 + offset)) != 0).then_some(sp).flatten()
+                    },
+                    Window::ObjWin => (self.winout.0 & (1 << 12) != 0).then_some(sp).flatten(),
+                    Window::WinOut => (self.winout.0 & (1 << 4) != 0).then_some(sp).flatten()
+                }
+            } else {
+                sp
+            };
+
+            let final_px = if self.current_sprite_line[x].prio <= bg_prio {
+                sp_win.or(bg)
+            } else {
+                bg.or(sp_win)
+            };
+
+            render_line[x] = render_line[x].or(final_px);
+
+            // for prio_layer in bg_sorted {
+            //     let bg = (is_bg_enabled & (1 << prio_layer) != 0)
+            //         .then_some(self.current_bg_line[prio_layer][x])
+            //         .flatten();
+
+            //     // Windowing composition. TODO: difference between these blocks?
+            //     let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+            //         match win {
+            //             Window::Win0 | Window::Win1 => {
+            //                 let offset = if win == Window::Win0 { 0 } else { 8 };
+            //                 // Check if obj layer is enabled in window.
+            //                 if self.winin.0 & (1 << (4 + offset)) != 0 {
+            //                     // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
+            //                     sp.or_else(|| if self.winin.0 & (1 << (prio_layer + offset)) != 0 { bg } else { None })
+            //                 } else {
+            //                     // Else, check if current bg layer is enabled and use that.
+            //                     (self.winin.0 & (1 << (prio_layer + offset)) != 0).then_some(bg).flatten()
+            //                 }
+            //             },
+            //             Window::WinOut => {
+            //                 // Check if either obj layer or bg layer is enabled for WINOUT.
+            //                 // Use whichever is not None (either color 0 or layer disabled).
+            //                 let sp_out = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
+            //                 let bg_out = if self.winout.0 & (1 << prio_layer) != 0 { bg } else { None };
+
+            //                 sp_out.or(bg_out)
+            //             },
+            //             Window::ObjWin => {
+            //                 let sp_out = if self.winout.0 & (1 << 12) != 0 { sp } else { None };
+            //                 let bg_out = if self.winout.0 & (1 << (prio_layer + 8)) != 0 { bg } else { None };
+
+            //                 if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
+            //                     sp_out.or(bg_out)
+            //                 } else {
+            //                     bg_out.or(sp_out)
+            //                 }
+            //             },
+            //         }
+            //     } else {
+            //         if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
+            //             sp.or(bg)
+            //         } else {
+            //             bg.or(sp)
+            //         }
+            //     };
+
+            //     render_line[x] = render_line[x].or(final_px);
+            // }
         }
 
         self.obj_window_buf.clear();
