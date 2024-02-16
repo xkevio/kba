@@ -288,6 +288,14 @@ impl Ppu {
                     }
                 });
             }
+            2 => {
+                self.current_bg_line = [[None; 512]; 4];
+                seq!(BG in 2..=3 {
+                    if self.dispcnt.bg~BG() {
+                        self.render_affine_bg::<BG>(vram, palette_ram);
+                    }
+                });
+            }
             3 => {
                 let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
                 let line = &vram[start..(start + 480)];
@@ -455,7 +463,7 @@ impl Ppu {
             return;
         }
 
-        self.current_sprite_line = [Obj::default(); 512];
+        self.current_sprite_line = [Obj { prio: 255, ..Default::default() }; 512];
         for sprite in self.current_sprites.iter().rev() {
             if !sprite.rot_scale && sprite.double_or_disable {
                 continue;
@@ -496,6 +504,10 @@ impl Ppu {
 
                 // keep for now to prevent overflow with screen_x
                 if spx_off < 0 || spx_off >= 240 {
+                    continue;
+                }
+
+                if sprite.prio > self.current_sprite_line[spx_off as usize].prio {
                     continue;
                 }
 
@@ -603,14 +615,15 @@ impl Ppu {
 
         // Draw all enabled background layers correctly sorted by priority.
         // Draw all the sprite layers on top of the backgrounds.
-        for prio in bg_sorted {
-            for x in 0..512 {
-                let win = self.in_window(x, y);
-                let sp = (self.current_sprite_line[x].prio == prio as u8)
-                    .then_some(self.current_sprite_line[x].px)
-                    .flatten();
-                let bg = (is_bg_enabled & (1 << prio) != 0)
-                    .then_some(self.current_bg_line[prio][x])
+
+        // TODO: REFACTOR THIS BY GOING IN LOCKSTEP 
+        for x in 0..512 {
+            let win = self.in_window(x, y);
+            let sp = self.current_sprite_line[x].px;
+
+            for prio_layer in bg_sorted {
+                let bg = (is_bg_enabled & (1 << prio_layer) != 0)
+                    .then_some(self.current_bg_line[prio_layer][x])
                     .flatten();
 
                 // Windowing composition. TODO: difference between these blocks?
@@ -621,33 +634,38 @@ impl Ppu {
                             // Check if obj layer is enabled in window.
                             if self.winin.0 & (1 << (4 + offset)) != 0 {
                                 // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
-                                sp.or_else(|| if self.winin.0 & (1 << (prio + offset)) != 0 { bg } else { None })
+                                sp.or_else(|| if self.winin.0 & (1 << (prio_layer + offset)) != 0 { bg } else { None })
                             } else {
                                 // Else, check if current bg layer is enabled and use that.
-                                (self.winin.0 & (1 << (prio + offset)) != 0).then_some(bg).flatten()
+                                (self.winin.0 & (1 << (prio_layer + offset)) != 0).then_some(bg).flatten()
                             }
                         },
                         Window::WinOut => {
                             // Check if either obj layer or bg layer is enabled for WINOUT.
                             // Use whichever is not None (either color 0 or layer disabled).
                             let sp_out = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
-                            let bg_out = if self.winout.0 & (1 << prio) != 0 { bg } else { None };
+                            let bg_out = if self.winout.0 & (1 << prio_layer) != 0 { bg } else { None };
 
                             sp_out.or(bg_out)
                         },
                         Window::ObjWin => {
-                            // Check if obj layer is enabled in window.
-                            if self.winout.0 & (1 << 12) != 0 {
-                                // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
-                                sp.or_else(|| if self.winout.0 & (1 << (prio + 8)) != 0 { bg } else { None })
+                            let sp_out = if self.winout.0 & (1 << 12) != 0 { sp } else { None };
+                            let bg_out = if self.winout.0 & (1 << (prio_layer + 8)) != 0 { bg } else { None };
+
+                            if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
+                                sp_out.or(bg_out)
                             } else {
-                                // Else, check if current bg layer is enabled and use that.
-                                (self.winout.0 & (1 << (prio + 8)) != 0).then_some(bg).flatten()
+                                // todo: all other cases
+                                bg_out.or(if is_bg_enabled & (1 << prio_layer) != 0 { sp_out } else { None })
                             }
                         },
                     }
                 } else {
-                    sp.or(bg)
+                    if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
+                        sp.or(bg)
+                    } else {
+                        bg.or(if is_bg_enabled & (1 << prio_layer) != 0 { sp } else { None })
+                    }
                 };
 
                 render_line[x] = render_line[x].or(final_px);
@@ -780,11 +798,14 @@ impl Ppu {
                 }
 
                 let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
-                self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                if enabled_bgs & (1 << layer_idx) != 0 {
+                    self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                }
             }
         }
     }
 
+    /// Check if (x, y) position is inside of a Window.
     fn in_window(&self, x: usize, y: usize) -> Window {
         for win in 0..2 {
             if self.dispcnt.0 & (1 << (13 + win)) == 0 {
