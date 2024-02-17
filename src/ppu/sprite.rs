@@ -1,8 +1,6 @@
 use itertools::Itertools;
 use proc_bitfield::ConvRaw;
 
-use crate::gba::LCD_HEIGHT;
-
 pub struct Sprite {
     pub x: u16,
     pub y: u8,
@@ -63,20 +61,7 @@ impl Sprite {
             let signed_end = signed_start + sprite_height;
             let wrapped_ly = ly as i16;
 
-            let contain = wrapped_ly >= signed_start && wrapped_ly < signed_end;
-
-            // // TODO: simplify wrapped range check!
-            // let contain = loop {
-            //     if signed_start as i16 == signed_end {
-            //         break false;
-            //     } else if signed_start as i16 == wrapped_ly {
-            //         break true;
-            //     } else {
-            //         signed_start += 1;
-            //     }
-            // };
-
-            if contain {
+            if wrapped_ly >= signed_start && wrapped_ly < signed_end {
                 sprites.push(sprite);
             }
         }
