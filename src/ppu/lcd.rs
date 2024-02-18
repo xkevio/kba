@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, ops::BitAnd};
 
 use derivative::Derivative;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
@@ -341,7 +341,7 @@ impl Ppu {
 
             // Offset map_data screenblock if x > 255 or y > 255 depending on screen size.
             // Additionally, offset address by tile with x and y akin to (width * y + x).
-            // TODO: correct x and y offset
+            // FIXME: correct x and y offset with screen size
             let map_data = bg_cnt.screen_base_block() as u32 * 0x800
                 + sbb_off * 0x800
                 + 2 * (32 * ((y_off % 512) as u32 / 8) + (x_off as u32 / 8));
@@ -471,7 +471,7 @@ impl Ppu {
             }
 
             // Difference of y inside the sprite.
-            let y = self.vcount.ly() as i32 - sprite.y as i8 as i32;
+            let y = (self.vcount.ly() - sprite.y) as i16;
 
             // Use identity matrix for regular sprites and the correct params for affine.
             let (pa, pb, pc, pd) = match sprite.rot_scale {
@@ -488,11 +488,11 @@ impl Ppu {
                 let sprite_x = if signed_sprite_x >= 240 { signed_sprite_x - 512 } else { signed_sprite_x };
 
                 let spx_off = sprite_x + spx as i16;
-                let x = spx as i32;
+                let x = spx as i16;
 
                 // Transform into texture space with affine transformation.
-                let mut tx = (pa as i32 * (x - (width as i32 / 2)) + pb as i32 * (y - (height as i32 / 2))) >> 8;
-                let mut ty = (pc as i32 * (x - (width as i32 / 2)) + pd as i32 * (y - (height as i32 / 2))) >> 8;
+                let mut tx = (pa as i32 * (x - (width as i16 / 2)) as i32 + pb as i32 * (y - (height as i16 / 2)) as i32) >> 8;
+                let mut ty = (pc as i32 * (x - (width as i16 / 2)) as i32 + pd as i32 * (y - (height as i16 / 2)) as i32) >> 8;
 
                 // Adjust sprite center.
                 tx += ((width as i32) / 2) >> sprite.double_or_disable as i32;
@@ -666,14 +666,14 @@ impl Ppu {
                     if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
                         sp.or(bg)
                     } else {
-                        // if ((prio_layer + 1)..self.current_sprite_line[x].prio as usize)
-                        //     .any(|x| is_bg_enabled & (1 << x) != 0) 
-                        // {
-                        //     Some(0xFFFF)
-                        // } else {
-                        //     bg.or(sp)
-                        // }
-                        bg.or(sp)
+                        if ((prio_layer + 1)..self.current_sprite_line[x].prio as usize)
+                            .any(|x| is_bg_enabled & (1 << x) != 0) 
+                        {
+                            bg
+                        } else {
+                            bg.or(sp)
+                        }
+                        // bg.or(sp)
                     }
                 });
             }

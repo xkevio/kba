@@ -49,7 +49,7 @@ impl Sprite {
             let attr = u64::from_le_bytes(attributes.try_into().unwrap());
             let sprite = Sprite::from(attr);
 
-            // Treat y as signed with [-127, 128].
+            // Treat y as signed with [-128, 127].
             // Won't fully work for affine double sprite size.
             let mut signed_start = sprite.y as i16;
             signed_start -= if sprite.y >= 160 { 256 } else { 0 };
