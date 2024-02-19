@@ -1,4 +1,4 @@
-use std::{collections::HashSet, ops::BitAnd};
+use std::collections::HashSet;
 
 use derivative::Derivative;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
@@ -326,25 +326,30 @@ impl Ppu {
         let bg_hofs = self.bgxhofs[BG];
         let bg_vofs = self.bgxvofs[BG];
 
-        let y_off = self.vcount.ly() as u16 + bg_vofs;
         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+        let scr_size_lut_w = [256, 512, 256, 512];
+        let scr_size_lut_h = [256, 256, 512, 512];
+        
+        let (scr_w, scr_h) = (
+            scr_size_lut_w[bg_cnt.screen_size() as usize],
+            scr_size_lut_h[bg_cnt.screen_size() as usize],
+        );
+        let y_off = self.vcount.ly() as u16 + bg_vofs;
 
         for x in 0..LCD_WIDTH {
-            let x_off = (x + bg_hofs as usize) % 256;
+            let x_off = x + bg_hofs as usize;
             let sbb_off = match bg_cnt.screen_size() {
                 0 => 0,
-                1 => ((x + bg_hofs as usize) % 512) / 256,
-                2 => (y_off as usize % 512) / 256,
-                3 => (((x + bg_hofs as usize) % 512) / 256) + ((y_off as usize % 512) / 256),
+                1 => (x_off % scr_w) / 256,
+                2 => (y_off as usize % scr_h as usize) / 256,
+                3 => ((x_off % scr_w) / 256) + ((y_off as usize % scr_h as usize) / 256) * 2,
                 _ => unreachable!(),
             } as u32;
 
             // Offset map_data screenblock if x > 255 or y > 255 depending on screen size.
             // Additionally, offset address by tile with x and y akin to (width * y + x).
-            // FIXME: correct x and y offset with screen size
-            let map_data = bg_cnt.screen_base_block() as u32 * 0x800
-                + sbb_off * 0x800
-                + 2 * (32 * ((y_off % 512) as u32 / 8) + (x_off as u32 / 8));
+            let map_data = (bg_cnt.screen_base_block() as u32 + sbb_off) * 0x800
+                + 2 * ((32 * ((y_off % 256) as u32 / 8)) + ((x_off % 256) as u32 / 8));
 
             let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
@@ -673,12 +678,11 @@ impl Ppu {
                         } else {
                             bg.or(sp)
                         }
-                        // bg.or(sp)
                     }
                 });
             }
 
-            // If no backgrounds are enabled, still draw sprite layer.
+            // TODO: If no backgrounds are enabled, still draw sprite layer.
             if is_bg_enabled == 0 {
                 final_px = sp;
             }
