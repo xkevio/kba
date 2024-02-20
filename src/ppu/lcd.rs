@@ -639,8 +639,8 @@ impl Ppu {
                     $($win => {
                         let sp_out = if self.$win_reg.0 & (1 << (4 + $offset)) != 0 { $sp } else { None };
                         let bg_out = if self.$win_reg.0 & (1 << ($layer + $offset)) != 0 { $bg } else { None };
-    
-                        (sp_out, bg_out)  
+
+                        (sp_out, bg_out)
                     })*
                 }
             };
@@ -660,7 +660,10 @@ impl Ppu {
                     continue;
                 }
 
-                let (sp, bg) = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                let (sp, bg) = if self.dispcnt.win0()
+                    || self.dispcnt.win1()
+                    || self.dispcnt.obj_win()
+                {
                     compose_win_px!(win, sp, bg, prio_layer,
                         Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
                         Window::WinOut => winout; 0,
@@ -671,18 +674,18 @@ impl Ppu {
                 };
 
                 /*
-                    If the current sprite pixel has a higher priority (lower value), 
-                    use it first and if its None, use background pixel.
-                    
-                    Else, use the background pixel directly iff there is a layer between
-                    this background layer and the sprite layer. Otherwise, bg first then sp.
-                 */
+                   If the current sprite pixel has a higher priority (lower value),
+                   use it first and if its None, use background pixel.
+
+                   Else, use the background pixel directly iff there is a layer between
+                   this background layer and the sprite layer. Otherwise, bg first then sp.
+                */
                 final_px = final_px.or_else(|| {
                     if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
                         sp.or(bg)
                     } else {
                         if ((prio_layer + 1)..self.current_sprite_line[x].prio as usize)
-                            .any(|x| is_bg_enabled & (1 << x) != 0) 
+                            .any(|x| is_bg_enabled & (1 << x) != 0)
                         {
                             bg
                         } else {
@@ -732,7 +735,9 @@ impl Ppu {
 
             let window = self.in_window(x, self.vcount.ly() as usize);
             let window_sfx = match window {
-                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => true,
+                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => {
+                    true
+                }
                 Window::Win0 => self.winin.win0_col(),
                 Window::Win1 => self.winin.win1_col(),
                 Window::WinOut => self.winout.win_col_out(),
@@ -807,7 +812,8 @@ impl Ppu {
                         self.bldalpha.evb(),
                     );
                 }
-                self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]);
+                self.current_sprite_line[x].px =
+                    self.current_sprite_line[x].px.map(|_| layers.0[0]);
             } else if window_sfx {
                 match color_effect {
                     ColorEffect::AlphaBlending => {
@@ -833,9 +839,14 @@ impl Ppu {
                     ColorEffect::None => return,
                 }
 
-                let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
+                let layer_idx = if layers.2[0] == 4 {
+                    layers.2[1]
+                } else {
+                    layers.2[0]
+                };
                 if enabled_bgs & (1 << layer_idx) != 0 {
-                    self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                    self.current_bg_line[layer_idx][x] =
+                        self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
                 }
             }
         }
@@ -894,7 +905,9 @@ impl Mcu for Ppu {
     fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt(value),
-            0x0004 => self.dispstat.set_dispstat((value & !0b111) | self.dispstat.0 & 0b111),
+            0x0004 => self
+                .dispstat
+                .set_dispstat((value & !0b111) | self.dispstat.0 & 0b111),
             0x0008 => self.bgxcnt[0].set_bg_control(value),
             0x000A => self.bgxcnt[1].set_bg_control(value),
             0x000C => self.bgxcnt[2].set_bg_control(value),

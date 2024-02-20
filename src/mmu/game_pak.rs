@@ -7,6 +7,9 @@ pub struct GamePak {
 
 impl Default for GamePak {
     fn default() -> Self {
-        Self { rom: box_arr![0xFF; 0x0200_0000], sram: Default::default() }
+        Self {
+            rom: box_arr![0xFF; 0x0200_0000],
+            sram: Default::default(),
+        }
     }
 }

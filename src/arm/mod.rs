@@ -1,4 +1,5 @@
 pub mod interpreter;
+pub mod jit;
 
 /// Fill array with `N` default values besides index `i` which gets `val`.
 pub fn arr_with<const N: usize, T: Copy + Default>(i: usize, val: T) -> [T; N] {

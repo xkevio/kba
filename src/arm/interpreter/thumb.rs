@@ -339,7 +339,7 @@ impl Arm7TDMI {
     }
 
     /// Format 13: add offset to SP.
-    /// 
+    ///
     /// No const generic with current 8bit thumb decoding :(
     pub fn add_sp(&mut self, opcode: u16) {
         let offset = (opcode & 0x7F) as u32;

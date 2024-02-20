@@ -1,7 +1,9 @@
 use std::ops::{Index, IndexMut};
 
 use crate::{
-    arm::arr_with, box_arr, fl, mmu::{bus::Bus, game_pak::GamePak, Mcu}
+    arm::arr_with,
+    box_arr, fl,
+    mmu::{bus::Bus, game_pak::GamePak, Mcu},
 };
 use proc_bitfield::{bitfield, ConvRaw};
 
@@ -9,12 +11,18 @@ use proc_bitfield::{bitfield, ConvRaw};
 type Spsr = Cpsr;
 /// Each mode has its own banked registers (mostly r13 and r14).
 #[derive(Default, Clone, Copy)]
-struct BankedRegisters { spsr: Spsr, bank: [u32; 7] }
+struct BankedRegisters {
+    spsr: Spsr,
+    bank: [u32; 7],
+}
 
 /// Initialize `BankedRegister` with SPSR and SP while filling the rest.
 macro_rules! bank {
     (spsr: $spsr:expr, sp: $sp:expr) => {
-        BankedRegisters { spsr: $spsr, bank: arr_with(5, $sp) }
+        BankedRegisters {
+            spsr: $spsr,
+            bank: arr_with(5, $sp),
+        }
     };
 }
 
@@ -147,7 +155,7 @@ impl Arm7TDMI {
 
         // Resize ROM to 32 MB always for OOB reads.
         let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];
-        rom_arr[0..(rom.len())].copy_from_slice(rom); 
+        rom_arr[0..(rom.len())].copy_from_slice(rom);
 
         // Initialize GamePak memory.
         let bus = Bus {
@@ -520,7 +528,9 @@ impl Arm7TDMI {
             }
             // Assign to correct PSR.
             match PSR {
-                true if (current_mode != Mode::User || current_mode != Mode::System) => self.spsr = source_psr,
+                true if (current_mode != Mode::User || current_mode != Mode::System) => {
+                    self.spsr = source_psr
+                }
                 false => self.cpsr = source_psr,
                 _ => {}
             }
@@ -672,10 +682,10 @@ impl Arm7TDMI {
         } else {
             self.bus.write16(
                 aligned_addr,
-                self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 }
+                self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 },
             );
         }
-        
+
         self.branch = rd == 15 && L;
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
             self.regs[rn] = base_with_offset;
@@ -897,7 +907,7 @@ impl Arm7TDMI {
 
         // Store previous SPSR in temp variable.
         let spsr = self.spsr;
-        
+
         // Exchange SPSR depending on mode.
         // If FIQ, take from fiq_regs. If System or User, read CPSR.
         self.banked_regs[current_mode].spsr = spsr;
@@ -909,12 +919,14 @@ impl Arm7TDMI {
         // If we are switching from FIQ: load regs 8-14 back into FIQ bank.
         // Load old system registers back in before switching to new mode register.
         if current_mode == Mode::Fiq {
-            self.banked_regs[current_mode].bank.copy_from_slice(&self.regs[8..=14]);
+            self.banked_regs[current_mode]
+                .bank
+                .copy_from_slice(&self.regs[8..=14]);
             self.regs[8..=14].copy_from_slice(&self.banked_regs.sys_regs.bank[8..=14]);
         }
 
         // If new mode is FIQ: copy current registers into system bank.
-        // Then, load FIQ regs into registers. 
+        // Then, load FIQ regs into registers.
         if new_mode == Mode::Fiq {
             self.banked_regs.sys_regs.bank[8..=14].copy_from_slice(&self.regs[8..=14]);
             self.regs[8..=14].copy_from_slice(&self.banked_regs[new_mode].bank);

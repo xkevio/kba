@@ -73,15 +73,11 @@ impl Default for Bus {
 
 impl Bus {
     pub fn tick(&mut self, cycles: usize) {
-        self.ppu.cycle(
-            &*self.vram, 
-            &self.palette_ram, 
-            &self.oam, 
-            &mut self.iff,
-        );
+        self.ppu
+            .cycle(&*self.vram, &self.palette_ram, &self.oam, &mut self.iff);
         self.timers.tick(&mut self.iff, cycles);
 
-        /* 
+        /*
         The following DMA checks can still be optimized if they are only called
         directly when HBlank or VBlank happens, instead this still checks stuff
         every cycle but doesn't run it every cycle.
@@ -96,7 +92,7 @@ impl Bus {
             match self.ppu.current_mode {
                 Mode::HBlank => self.dma_transfer(StartTiming::HBlank),
                 Mode::VBlank => self.dma_transfer(StartTiming::VBlank),
-                Mode::HDraw => {},
+                Mode::HDraw => {}
             }
 
             self.ppu.prev_mode = self.ppu.current_mode;
@@ -129,9 +125,11 @@ impl Bus {
             // TODO: Special start (Video Capture) timing and wow, this would be nicer with a scheduler.
             if channels[ch].enable {
                 if start_timing == dma_type
-                    || start_timing == dma_type && self.ppu.dispstat.hblank() && !self.ppu.dispstat.vblank()
-                    || start_timing == dma_type && self.ppu.dispstat.vblank() 
-                    // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
+                    || start_timing == dma_type
+                        && self.ppu.dispstat.hblank()
+                        && !self.ppu.dispstat.vblank()
+                    || start_timing == dma_type && self.ppu.dispstat.vblank()
+                // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
                 {
                     for _ in 0..word_count {
                         if channels[ch].transfer_type {
@@ -141,7 +139,7 @@ impl Bus {
                             let data = self.read16(src_addr);
                             self.write16(dst_addr, data);
                         }
-                        
+
                         src_addr = match src_addr_control {
                             AddrControl::Increment => src_addr + addr_delta,
                             AddrControl::Decrement => src_addr - addr_delta,
@@ -149,7 +147,9 @@ impl Bus {
                         };
 
                         dst_addr = match dst_addr_control {
-                            AddrControl::Increment | AddrControl::IncReload => dst_addr + addr_delta,
+                            AddrControl::Increment | AddrControl::IncReload => {
+                                dst_addr + addr_delta
+                            }
                             AddrControl::Decrement => dst_addr - addr_delta,
                             AddrControl::Fixed => dst_addr,
                         };
@@ -165,7 +165,11 @@ impl Bus {
 
                     // self.ppu.vid_capture = false;
                     self.dma_channels[ch].src = src_addr;
-                    self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
+                    self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload {
+                        channels[ch].dst
+                    } else {
+                        dst_addr
+                    };
                 }
             }
         }
