@@ -327,22 +327,23 @@ impl Ppu {
         let bg_vofs = self.bgxvofs[BG];
 
         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
-        let scr_size_lut_w = [256, 512, 256, 512];
-        let scr_size_lut_h = [256, 256, 512, 512];
+        let y_off = self.vcount.ly() as usize + bg_vofs as usize;
+
+        const SCR_SIZE_LUT_W: [usize; 4] = [256, 512, 256, 512];
+        const SCR_SIZE_LUT_H: [usize; 4] = [256, 256, 512, 512];
         
         let (scr_w, scr_h) = (
-            scr_size_lut_w[bg_cnt.screen_size() as usize],
-            scr_size_lut_h[bg_cnt.screen_size() as usize],
+            SCR_SIZE_LUT_W[bg_cnt.screen_size() as usize],
+            SCR_SIZE_LUT_H[bg_cnt.screen_size() as usize],
         );
-        let y_off = self.vcount.ly() as u16 + bg_vofs;
 
         for x in 0..LCD_WIDTH {
             let x_off = x + bg_hofs as usize;
             let sbb_off = match bg_cnt.screen_size() {
                 0 => 0,
                 1 => (x_off % scr_w) / 256,
-                2 => (y_off as usize % scr_h as usize) / 256,
-                3 => ((x_off % scr_w) / 256) + ((y_off as usize % scr_h as usize) / 256) * 2,
+                2 => (y_off % scr_h) / 256,
+                3 => ((x_off % scr_w) / 256) + ((y_off % scr_h) / 256) * 2,
                 _ => unreachable!(),
             } as u32;
 
@@ -361,7 +362,7 @@ impl Ppu {
             // Rendering starts here; based on the bits per pixel we address the palette RAM differently.
             // `tile_off` is a similar offset idea to the one in `map_data` but on pixel granularity.
             let x_flip = if h_flip { 7 - (x_off % 8) } else { x_off % 8 };
-            let tile_off = if v_flip { 7 - (y_off as usize % 8) } else { y_off as usize % 8 } * 8 + x_flip;
+            let tile_off = if v_flip { 7 - (y_off % 8) } else { y_off % 8 } * 8 + x_flip;
 
             let tile_addr = tile_start_addr + tile_off / (2 >> bg_cnt.bpp() as usize);
             let (px_idx, px) = if !bg_cnt.bpp() {
@@ -626,12 +627,13 @@ impl Ppu {
 
             prio_a.cmp(&prio_b).then(is_enabled_b.cmp(&is_enabled_a))
         });
+        // Apply special color effects to the background and sprite buffers.
         self.special_color_effect(backdrop);
 
         // Check if either obj layer or bg layer is enabled for WININ/WINOUT.
         // Use whichever is not None (either color 0 or layer disabled).
         macro_rules! compose_win_px {
-            ($win_var:expr; $($win:pat => $win_reg:ident; $sp:expr; $bg:expr; $layer:ident + $offset:expr),*) => {
+            ($win_var:expr, $sp:expr, $bg:expr, $layer:expr, $($win:pat => $win_reg:ident; $offset:expr),*) => {
                 match $win_var {
                     $($win => {
                         let sp_out = if self.$win_reg.0 & (1 << (4 + $offset)) != 0 { $sp } else { None };
@@ -658,15 +660,22 @@ impl Ppu {
                 }
 
                 let (sp, bg) = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
-                    compose_win_px!(win;
-                        Window::Win0 | Window::Win1 => winin; sp; bg; prio_layer + if win == Window::Win0 { 0 } else { 8 },
-                        Window::WinOut => winout; sp; bg; prio_layer + 0,
-                        Window::ObjWin => winout; sp; bg; prio_layer + 8
+                    compose_win_px!(win, sp, bg, prio_layer,
+                        Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
+                        Window::WinOut => winout; 0,
+                        Window::ObjWin => winout; 8
                     )
                 } else {
                     (sp, bg)
                 };
 
+                /*
+                    If the current sprite pixel has a higher priority (lower value), 
+                    use it first and if its None, use background pixel.
+                    
+                    Else, use the background pixel directly iff there is a layer between
+                    this background layer and the sprite layer. Otherwise, bg first then sp.
+                 */
                 final_px = final_px.or_else(|| {
                     if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
                         sp.or(bg)
@@ -682,9 +691,17 @@ impl Ppu {
                 });
             }
 
-            // TODO: If no backgrounds are enabled, still draw sprite layer.
+            // If no backgrounds are enabled, still draw sprite layer (still affected by windowing).
             if is_bg_enabled == 0 {
-                final_px = sp;
+                final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                    compose_win_px!(win, sp, None, 0,
+                        Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
+                        Window::WinOut => winout; 0,
+                        Window::ObjWin => winout; 8
+                    ).1
+                } else {
+                    sp
+                }
             }
 
             render_line[x] = render_line[x].or(final_px);
