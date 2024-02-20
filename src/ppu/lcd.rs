@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use derivative::Derivative;
 use proc_bitfield::{bitfield, BitRange, ConvRaw};
 use seq_macro::seq;
@@ -60,6 +62,8 @@ pub struct Ppu {
 
     pub winin: WININ,
     pub winout: WINOUT,
+    /// All obj coordinates that have `ObjMode = Window`.
+    obj_window_buf: HashSet<(usize, usize)>,
 
     #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
     pub buffer: Vec<Option<u16>>,
@@ -107,6 +111,7 @@ struct Obj {
     px: Option<u16>,
     prio: u8,
     alpha: bool,
+    window: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, PartialOrd, Ord, Eq)]
@@ -231,7 +236,7 @@ impl Ppu {
         self.update_bg_scanline(vram, palette_ram);
 
         // Render sprites by first collecting all sprites from OAM
-        // that are on this line, then drawing them. (todo: draw sprites for mode 3, 4, 5)
+        // that are on this line, then drawing them. (todo: draw sprites for mode 4, 5)
         self.current_sprites = Sprite::collect_obj_ly(oam, self.vcount.ly());
         self.current_rot_scale = Sprite::collect_rot_scale_params(oam);
         self.render_sprite_line(vram, palette_ram);
@@ -240,6 +245,17 @@ impl Ppu {
         // and don't use the line draw function.
         if self.dispcnt.bg_mode() < 3 {
             self.draw_line(palette_ram);
+        } else if self.dispcnt.bg_mode() == 3 {
+            let start = self.vcount.ly() as usize * LCD_WIDTH * 2;
+            let line = self.current_sprite_line;
+
+            for (i, px) in line[..LCD_WIDTH].iter().enumerate() {
+                if let Some(obj_px) = px.px {
+                    self.buffer[(start / 2) + i] = Some(obj_px);
+                }
+            }
+        } else {
+            todo!("sprites in mode 4 and 5");
         }
     }
 
@@ -269,6 +285,14 @@ impl Ppu {
                         } else {
                             self.render_affine_bg::<BG>(vram, palette_ram);
                         }
+                    }
+                });
+            }
+            2 => {
+                self.current_bg_line = [[None; 512]; 4];
+                seq!(BG in 2..=3 {
+                    if self.dispcnt.bg~BG() {
+                        self.render_affine_bg::<BG>(vram, palette_ram);
                     }
                 });
             }
@@ -302,24 +326,31 @@ impl Ppu {
         let bg_hofs = self.bgxhofs[BG];
         let bg_vofs = self.bgxvofs[BG];
 
-        let y_off = (self.vcount.ly() as u16 + bg_vofs) % 256;
         let tile_data = bg_cnt.char_base_block() as u32 * 0x4000;
+        let y_off = self.vcount.ly() as usize + bg_vofs as usize;
+
+        const SCR_SIZE_LUT_W: [usize; 4] = [256, 512, 256, 512];
+        const SCR_SIZE_LUT_H: [usize; 4] = [256, 256, 512, 512];
+        
+        let (scr_w, scr_h) = (
+            SCR_SIZE_LUT_W[bg_cnt.screen_size() as usize],
+            SCR_SIZE_LUT_H[bg_cnt.screen_size() as usize],
+        );
 
         for x in 0..LCD_WIDTH {
-            let x_off = (x + bg_hofs as usize) % 256;
+            let x_off = x + bg_hofs as usize;
             let sbb_off = match bg_cnt.screen_size() {
                 0 => 0,
-                1 => ((x + bg_hofs as usize) % 512) / 256,
-                2 => (y_off as usize % 512) / 256,
-                3 => (((x + bg_hofs as usize) % 512) / 256) + ((y_off as usize % 512) / 256),
+                1 => (x_off % scr_w) / 256,
+                2 => (y_off % scr_h) / 256,
+                3 => ((x_off % scr_w) / 256) + ((y_off % scr_h) / 256) * 2,
                 _ => unreachable!(),
             } as u32;
 
             // Offset map_data screenblock if x > 255 or y > 255 depending on screen size.
             // Additionally, offset address by tile with x and y akin to (width * y + x).
-            let map_data = bg_cnt.screen_base_block() as u32 * 0x800
-                + sbb_off * 0x800
-                + 2 * (32 * (y_off as u32 / 8) + (x_off as u32 / 8));
+            let map_data = (bg_cnt.screen_base_block() as u32 + sbb_off) * 0x800
+                + 2 * ((32 * ((y_off % 256) as u32 / 8)) + ((x_off % 256) as u32 / 8));
 
             let tile_id = ((vram[map_data as usize + 1] as u16) << 8) | (vram[map_data as usize]) as u16;
             let tile_start_addr = tile_data as usize + (tile_id as usize & 0x3FF) * (32 << bg_cnt.bpp() as usize);
@@ -331,7 +362,7 @@ impl Ppu {
             // Rendering starts here; based on the bits per pixel we address the palette RAM differently.
             // `tile_off` is a similar offset idea to the one in `map_data` but on pixel granularity.
             let x_flip = if h_flip { 7 - (x_off % 8) } else { x_off % 8 };
-            let tile_off = if v_flip { 7 - (y_off as usize % 8) } else { y_off as usize % 8 } * 8 + x_flip;
+            let tile_off = if v_flip { 7 - (y_off % 8) } else { y_off % 8 } * 8 + x_flip;
 
             let tile_addr = tile_start_addr + tile_off / (2 >> bg_cnt.bpp() as usize);
             let (px_idx, px) = if !bg_cnt.bpp() {
@@ -352,19 +383,22 @@ impl Ppu {
                 ]))
             };
 
-            let mosaic_h = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_h() as usize } else { 0 };
-            let mosaic_v = if bg_cnt.mosaic() { self.mosaic.bg_mosaic_v() as u16 } else { 0 };
+            let mosaic_h = self.mosaic.bg_mosaic_h() as usize;
+            let mosaic_v = self.mosaic.bg_mosaic_v() as u16;
 
-            // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
-            if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
-                self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
-                self.bg_mosaic_v_buf[BG][x] = (px_idx != 0).then_some(px);
+            if !bg_cnt.mosaic() && px_idx != 0 {
+                self.current_bg_line[BG][x] = Some(px);
             } else {
-                if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
-                    self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
-                    self.bg_mosaic_v_buf[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                if x % (mosaic_h + 1) == 0 && self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
+                    self.current_bg_line[BG][x] = (px_idx != 0).then_some(px);
+                    self.bg_mosaic_v_buf[BG][x] = (px_idx != 0).then_some(px);
                 } else {
-                    self.current_bg_line[BG][x] = self.bg_mosaic_v_buf[BG][x];
+                    if self.vcount.ly() as u16 % (mosaic_v + 1) == 0 {
+                        self.current_bg_line[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                        self.bg_mosaic_v_buf[BG][x] = self.current_bg_line[BG][x - (x % (mosaic_h + 1))];
+                    } else {
+                        self.current_bg_line[BG][x] = self.bg_mosaic_v_buf[BG][x];
+                    }
                 }
             }
         }
@@ -436,14 +470,14 @@ impl Ppu {
             return;
         }
 
-        self.current_sprite_line = [Obj::default(); 512];
+        self.current_sprite_line = [Obj { prio: u8::MAX, ..Default::default() }; 512];
         for sprite in self.current_sprites.iter().rev() {
             if !sprite.rot_scale && sprite.double_or_disable {
                 continue;
             }
 
             // Difference of y inside the sprite.
-            let y = (sprite.y as i8 as i16).abs_diff(self.vcount.ly() as i16);
+            let y = (self.vcount.ly() - sprite.y) as i16;
 
             // Use identity matrix for regular sprites and the correct params for affine.
             let (pa, pb, pc, pd) = match sprite.rot_scale {
@@ -455,22 +489,33 @@ impl Ppu {
             let height = sprite.height() << sprite.double_or_disable as u8;
 
             for spx in 0..width {
-                let spx_off = sprite.x + spx as u16;
-
                 // "Local" sprite coordinates within its bounding box.
-                let lx = (spx_off - sprite.x) as i16;
-                let ly = y as i16;
+                let signed_sprite_x = (sprite.x << 7) as i16 >> 7;
+                let sprite_x = if signed_sprite_x >= 240 { signed_sprite_x - 512 } else { signed_sprite_x };
+
+                let spx_off = sprite_x + spx as i16;
+                let x = spx as i16;
 
                 // Transform into texture space with affine transformation.
-                let mut tx = (pa * (lx - (width as i16 / 2)) + pb * (ly - (height as i16 / 2))) >> 8;
-                let mut ty = (pc * (lx - (width as i16 / 2)) + pd * (ly - (height as i16 / 2))) >> 8;
+                let mut tx = (pa as i32 * (x - (width as i16 / 2)) as i32 + pb as i32 * (y - (height as i16 / 2)) as i32) >> 8;
+                let mut ty = (pc as i32 * (x - (width as i16 / 2)) as i32 + pd as i32 * (y - (height as i16 / 2)) as i32) >> 8;
 
                 // Adjust sprite center.
-                tx += ((width as i16) / 2) >> sprite.double_or_disable as i16;
-                ty += ((height as i16) / 2) >> sprite.double_or_disable as i16;
+                tx += ((width as i32) / 2) >> sprite.double_or_disable as i32;
+                ty += ((height as i32) / 2) >> sprite.double_or_disable as i32;
 
                 // Disable sprite wrapping and repeating itself.
-                if tx < 0 || tx >= sprite.width() as i16 || ty < 0 || ty >= sprite.height() as i16 {
+                if tx < 0 || tx >= sprite.width() as i32 || ty < 0 || ty >= sprite.height() as i32 {
+                    continue;
+                }
+
+                // Prevent overflow with screen_x.
+                if spx_off < 0 || spx_off >= 240 {
+                    continue;
+                }
+
+                // Don't draw over already drawn sprites if the priority isn't higher.
+                if sprite.prio > self.current_sprite_line[spx_off as usize].prio {
                     continue;
                 }
 
@@ -500,10 +545,10 @@ impl Ppu {
                 // In modes 3-5, only tile numbers 512-1023 may be used, lower memory is used for background.
                 let tile_addr = match self.dispcnt.bg_mode() < 3 {
                     true => 0x10000 + (tile_id as usize % 1024) * 32,
-                    false => 0x14000 + (tile_id as usize % 1024) * 32,
+                    false => 0x14000 + (tile_id as usize % 512) * 32,
                 };
 
-                let screen_x = spx_off as usize % 512;
+                let screen_x = spx_off as usize;
                 let tile_off = if sprite.v_flip && !sprite.rot_scale { 7 - (ty as u16 % 8) } else { ty as u16 % 8 }
                     * 8 + if sprite.h_flip && !sprite.rot_scale { 7 - (tx as u16 % 8) } else { tx as u16 % 8 };
 
@@ -521,26 +566,42 @@ impl Ppu {
                     ]))
                 };
 
-                let mosaic_h = if sprite.mosaic { self.mosaic.obj_mosaic_h() as usize } else { 0 };
-                let mosaic_v = if sprite.mosaic { self.mosaic.obj_mosaic_v() as usize } else { 0 };
+                let mosaic_h = self.mosaic.obj_mosaic_h() as usize;
+                let mosaic_v = self.mosaic.obj_mosaic_v() as usize;
 
-                // todo: refactor to maybe not need a whole second buffer and short circuit for bgs that have mosaic disabled.
-                if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                    self.current_sprite_line[screen_x] = if px_idx != 0 { 
-                        Obj { 
+                if !sprite.mosaic {
+                    if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
+                        self.current_sprite_line[screen_x] = Obj { 
                             px: Some(px), 
                             prio: sprite.prio, 
-                            alpha: sprite.obj_mode == ObjMode::SemiTransparent 
-                        }
-                    } else { Obj::default() };
-                    self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
+                            alpha: sprite.obj_mode == ObjMode::SemiTransparent,
+                            window: sprite.obj_mode == ObjMode::Window,
+                        };
+                    }
                 } else {
-                    if self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                        self.current_sprite_line[screen_x] = self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                    if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
+                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
+                            self.current_sprite_line[screen_x] = Obj { 
+                                px: Some(px), 
+                                prio: sprite.prio, 
+                                alpha: sprite.obj_mode == ObjMode::SemiTransparent,
+                                window: sprite.obj_mode == ObjMode::Window,
+                            };
+                        }
                         self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
                     } else {
-                        self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
+                        if self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
+                            self.current_sprite_line[screen_x] = self.current_sprite_line[screen_x - (screen_x % (mosaic_h + 1))];
+                            self.obj_mosaic_v_buf[screen_x] = self.current_sprite_line[screen_x];
+                        } else {
+                            self.current_sprite_line[screen_x] = self.obj_mosaic_v_buf[screen_x];
+                        }
                     }
+                }
+
+                // If sprite has ObjWindow, don't draw and save (x, y) position.
+                if sprite.obj_mode == ObjMode::Window && px_idx != 0 {
+                    self.obj_window_buf.insert((screen_x, self.vcount.ly() as usize));
                 }
             }
         }
@@ -552,58 +613,102 @@ impl Ppu {
 
         // Get bits 8..=11 to get bg-enable bits.
         let is_bg_enabled: u8 = bits!(self.dispcnt.0, 8..=11);
-        let _backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
+        let backdrop = u16::from_le_bytes([palette_ram[0], palette_ram[1]]);
 
         let mut bg_sorted = [0, 1, 2, 3];
         let mut render_line = vec![None; 512];
 
-        bg_sorted.sort_by_key(|i| self.bgxcnt[*i].prio());
-        self.special_color_effect(palette_ram);
+        // Sort by priority, and if same priority, put enabled backgrounds first.
+        bg_sorted.sort_by(|a, b| {
+            let prio_a = self.bgxcnt[*a as usize].prio();
+            let prio_b = self.bgxcnt[*b as usize].prio();
 
-        // Draw all enabled background layers correctly sorted by priority.
-        // Draw all the sprite layers on top of the backgrounds.
-        for prio in bg_sorted {
-            for x in 0..512 {
-                let win = self.in_window(x, y);
-                let sp = (self.current_sprite_line[x].prio == prio as u8)
-                    .then_some(self.current_sprite_line[x].px)
-                    .flatten();
-                let bg = (is_bg_enabled & (1 << prio) != 0)
-                    .then_some(self.current_bg_line[prio][x])
-                    .flatten();
+            let is_enabled_a = is_bg_enabled & (1 << *a) != 0;
+            let is_enabled_b = is_bg_enabled & (1 << *b) != 0;
 
-                // Windowing composition. TODO: OBJ Windows (+ SFX bit).
-                let final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
-                    match win {
-                        Window::Win0 | Window::Win1 => {
-                            let offset = if win == Window::Win0 { 0 } else { 8 };
-                            // Check if obj layer is enabled in window.
-                            if self.winin.0 & (1 << (4 + offset)) != 0 {
-                                // If obj layer is enabled, use pixel. If None (color 0), check for bg layer and use that.
-                                sp.or_else(|| if self.winin.0 & (1 << (prio + offset)) != 0 { bg } else { None })
-                            } else {
-                                // Else, check if current bg layer is enabled and use that.
-                                (self.winin.0 & (1 << (prio + offset)) != 0).then_some(bg).flatten()
-                            }
-                        },
-                        Window::WinOut => {
-                            // Check if either obj layer or bg layer is enabled for WINOUT.
-                            // Use whichever is not None (either color 0 or layer disabled).
-                            let sp_out = if self.winout.0 & (1 << 4) != 0 { sp } else { None };
-                            let bg_out = if self.winout.0 & (1 << prio) != 0 { bg } else { None };
+            prio_a.cmp(&prio_b).then(is_enabled_b.cmp(&is_enabled_a))
+        });
+        // Apply special color effects to the background and sprite buffers.
+        self.special_color_effect(backdrop);
 
-                            sp_out.or(bg_out)
-                        },
-                        Window::ObjWin => todo!(),
-                    }
-                } else {
-                    sp.or(bg)
-                };
-
-                render_line[x] = render_line[x].or(final_px);
-            }
+        // Check if either obj layer or bg layer is enabled for WININ/WINOUT.
+        // Use whichever is not None (either color 0 or layer disabled).
+        macro_rules! compose_win_px {
+            ($win_var:expr, $sp:expr, $bg:expr, $layer:expr, $($win:pat => $win_reg:ident; $offset:expr),*) => {
+                match $win_var {
+                    $($win => {
+                        let sp_out = if self.$win_reg.0 & (1 << (4 + $offset)) != 0 { $sp } else { None };
+                        let bg_out = if self.$win_reg.0 & (1 << ($layer + $offset)) != 0 { $bg } else { None };
+    
+                        (sp_out, bg_out)  
+                    })*
+                }
+            };
         }
 
+        // Draw all enabled background layers correctly sorted by priority.
+        // Draw all the sprite pixels on top of the backgrounds.
+        for x in 0..LCD_WIDTH {
+            let win = self.in_window(x, y);
+            let sp = self.current_sprite_line[x].px;
+
+            let mut final_px = None;
+
+            for prio_layer in bg_sorted {
+                let bg = self.current_bg_line[prio_layer][x];
+                if is_bg_enabled & (1 << prio_layer) == 0 {
+                    continue;
+                }
+
+                let (sp, bg) = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                    compose_win_px!(win, sp, bg, prio_layer,
+                        Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
+                        Window::WinOut => winout; 0,
+                        Window::ObjWin => winout; 8
+                    )
+                } else {
+                    (sp, bg)
+                };
+
+                /*
+                    If the current sprite pixel has a higher priority (lower value), 
+                    use it first and if its None, use background pixel.
+                    
+                    Else, use the background pixel directly iff there is a layer between
+                    this background layer and the sprite layer. Otherwise, bg first then sp.
+                 */
+                final_px = final_px.or_else(|| {
+                    if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
+                        sp.or(bg)
+                    } else {
+                        if ((prio_layer + 1)..self.current_sprite_line[x].prio as usize)
+                            .any(|x| is_bg_enabled & (1 << x) != 0) 
+                        {
+                            bg
+                        } else {
+                            bg.or(sp)
+                        }
+                    }
+                });
+            }
+
+            // If no backgrounds are enabled, still draw sprite layer (still affected by windowing).
+            if is_bg_enabled == 0 {
+                final_px = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                    compose_win_px!(win, sp, None, 0,
+                        Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
+                        Window::WinOut => winout; 0,
+                        Window::ObjWin => winout; 8
+                    ).1
+                } else {
+                    sp
+                }
+            }
+
+            render_line[x] = render_line[x].or(final_px);
+        }
+
+        self.obj_window_buf.clear();
         for x in 0..LCD_WIDTH {
             self.buffer[y * LCD_WIDTH + x] = render_line[x];
         }
@@ -612,7 +717,7 @@ impl Ppu {
     /// Apply special color effects such as alpha blending, whitening or darkening.
     ///
     /// "Inspired" by https://github.com/ITotalJustice/notorious_beeg/blob/master/src/core/ppu/render.cpp#L1325
-    fn special_color_effect(&mut self, _palette_ram: &[u8]) {
+    fn special_color_effect(&mut self, backdrop: u16) {
         let src: u8 = bits!(self.bldcnt.0, 0..=5);
         let dst: u8 = bits!(self.bldcnt.0, 8..=13);
 
@@ -623,9 +728,17 @@ impl Ppu {
 
         for x in 0..512 {
             // Top two layers (pixel, prio, bg, obj_alpha).
-            let mut layers = ([0u16; 2], [4u8; 2], [0usize; 2], false);
+            let mut layers = ([backdrop; 2], [4u8; 2], [0usize; 2], false);
 
             let window = self.in_window(x, self.vcount.ly() as usize);
+            let window_sfx = match window {
+                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => true,
+                Window::Win0 => self.winin.win0_col(),
+                Window::Win1 => self.winin.win1_col(),
+                Window::WinOut => self.winout.win_col_out(),
+                Window::ObjWin => self.winout.obj_win_col(),
+            };
+
             // Check if layer is actually activated inside of a window before using it for blending.
             let layer_in_win = |layer: usize| {
                 if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
@@ -633,7 +746,7 @@ impl Ppu {
                         Window::Win0 => self.winin.0 & (1 << layer) != 0,
                         Window::Win1 => self.winin.0 & (1 << (layer + 8)) != 0,
                         Window::WinOut => self.winout.0 & (1 << layer) != 0,
-                        Window::ObjWin => todo!(),
+                        Window::ObjWin => self.winout.0 & (1 << (layer + 8)) != 0,
                     }
                 } else {
                     true
@@ -695,7 +808,7 @@ impl Ppu {
                     );
                 }
                 self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]);
-            } else {
+            } else if window_sfx {
                 match color_effect {
                     ColorEffect::AlphaBlending => {
                         if src & (1 << layers.2[0]) != 0 && dst & (1 << layers.2[1]) != 0 {
@@ -721,11 +834,14 @@ impl Ppu {
                 }
 
                 let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
-                self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                if enabled_bgs & (1 << layer_idx) != 0 {
+                    self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                }
             }
         }
     }
 
+    /// Check if (x, y) position is inside of a Window.
     fn in_window(&self, x: usize, y: usize) -> Window {
         for win in 0..2 {
             if self.dispcnt.0 & (1 << (13 + win)) == 0 {
@@ -741,6 +857,10 @@ impl Ppu {
             if x >= x1 && x < x2 && y >= y1 && y < y2 {
                 return if win == 0 { Window::Win0 } else { Window::Win1 };
             }
+        }
+
+        if self.dispcnt.obj_win() && self.obj_window_buf.contains(&(x, y)) {
+            return Window::ObjWin;
         }
 
         Window::WinOut

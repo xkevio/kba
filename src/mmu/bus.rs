@@ -42,6 +42,7 @@ pub struct Bus {
     pub game_pak: GamePak,
 
     pub halt: bool,
+    pub soundbias: u32,
 }
 
 impl Default for Bus {
@@ -65,6 +66,7 @@ impl Default for Bus {
             game_pak: GamePak::default(),
 
             halt: false,
+            soundbias: 0,
         }
     }
 }
@@ -181,6 +183,10 @@ impl Mcu for Bus {
                 addr @ 0x0000..=0x0051 => self.ppu.read8(addr),
                 addr @ 0x00B0..=0x00DF => self.dma_channels.read8(addr),
                 addr @ 0x0100..=0x010F => self.timers.read8(addr),
+                0x0088 => bits!(self.soundbias, 0..=7),
+                0x0089 => bits!(self.soundbias, 8..=15),
+                0x008A => bits!(self.soundbias, 16..=23),
+                0x008B => bits!(self.soundbias, 24..=31),
                 0x0130 => self.key_input.keyinput() as u8,
                 0x0131 => (self.key_input.keyinput() >> 8) as u8,
                 0x0200 => bits!(self.ie.0, 0..=7),
@@ -220,6 +226,10 @@ impl Mcu for Bus {
                 addr @ (0x0000..=0x004D | 0x0050..=0x0054) => self.ppu.write8(addr, value),
                 addr @ 0x00B0..=0x00DF => self.dma_channels.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
+                0x0088 => set_bits!(self.soundbias, 0..=7, value),
+                0x0089 => set_bits!(self.soundbias, 8..=15, value),
+                0x008A => set_bits!(self.soundbias, 16..=23, value),
+                0x008B => set_bits!(self.soundbias, 24..=31, value),
                 0x0200 => set_bits!(self.ie.0, 0..=7, value),
                 0x0201 => set_bits!(self.ie.0, 8..=15, value),
                 0x0202 => self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF),
