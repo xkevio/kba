@@ -509,11 +509,12 @@ impl Ppu {
                     continue;
                 }
 
-                // keep for now to prevent overflow with screen_x
+                // Prevent overflow with screen_x.
                 if spx_off < 0 || spx_off >= 240 {
                     continue;
                 }
 
+                // Don't draw over already drawn sprites if the priority isn't higher.
                 if sprite.prio > self.current_sprite_line[spx_off as usize].prio {
                     continue;
                 }
