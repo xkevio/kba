@@ -214,7 +214,7 @@ impl Mcu for Bus {
                 } else if address == 0x0E00_0001 {
                     0x13
                 } else {
-                    self.game_pak.sram[address as usize % 0x0001_0000]   
+                    self.game_pak.sram[address as usize % 0x0001_0000]
                 }
             }
             _ => 0,

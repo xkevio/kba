@@ -331,7 +331,7 @@ impl Ppu {
 
         const SCR_SIZE_LUT_W: [usize; 4] = [256, 512, 256, 512];
         const SCR_SIZE_LUT_H: [usize; 4] = [256, 256, 512, 512];
-        
+
         let (scr_w, scr_h) = (
             SCR_SIZE_LUT_W[bg_cnt.screen_size() as usize],
             SCR_SIZE_LUT_H[bg_cnt.screen_size() as usize],
@@ -571,19 +571,19 @@ impl Ppu {
 
                 if !sprite.mosaic {
                     if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
-                        self.current_sprite_line[screen_x] = Obj { 
-                            px: Some(px), 
-                            prio: sprite.prio, 
+                        self.current_sprite_line[screen_x] = Obj {
+                            px: Some(px),
+                            prio: sprite.prio,
                             alpha: sprite.obj_mode == ObjMode::SemiTransparent,
                             window: sprite.obj_mode == ObjMode::Window,
                         };
                     }
                 } else {
                     if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
-                            self.current_sprite_line[screen_x] = Obj { 
-                                px: Some(px), 
-                                prio: sprite.prio, 
+                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
+                            self.current_sprite_line[screen_x] = Obj {
+                                px: Some(px),
+                                prio: sprite.prio,
                                 alpha: sprite.obj_mode == ObjMode::SemiTransparent,
                                 window: sprite.obj_mode == ObjMode::Window,
                             };
