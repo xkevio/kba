@@ -9,8 +9,7 @@ use sdl2::{
 };
 
 use crate::{
-    gba::{Gba, LCD_HEIGHT, LCD_WIDTH},
-    ppu, SdlResult,
+    arm::jit::JitContext, gba::{Gba, LCD_HEIGHT, LCD_WIDTH}, ppu, SdlResult
 };
 
 macro_rules! process_scancodes {
@@ -54,12 +53,9 @@ impl SDLApplication {
     }
 
     pub fn run(&mut self, kba: &mut Gba) -> SdlResult<()> {
-        // TODO.
-        let _jit_translator = kba
-            .cpu
-            .jit_ctx
-            .create_jit_translator()
-            .expect("Failed to initialize JIT.");
+        // Initialize JitContext, setting flags and detecting the host ISA.
+        let mut jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
+        let mut jit_translator = jit_ctx.create_jit_translator().unwrap();
 
         let mut texture = self
             .texture_creator
@@ -91,7 +87,7 @@ impl SDLApplication {
             // For now, update every 266_666 cycles (60 frames).
             while kba.cycles < 266_666 {
                 // TODO: pass `jit` to opcode functions (change signature for JIT LUT).
-                kba.run();
+                kba.run(&mut jit_translator);
             }
 
             // Update frame and convert Option pixel values to corresponding colors.

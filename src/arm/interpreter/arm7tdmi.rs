@@ -42,8 +42,8 @@ pub struct Arm7TDMI {
 
     /// The memory bus, owned by the CPU for now.
     pub bus: Bus,
-    /// JIT context, holding builder meta information.
-    pub jit_ctx: JitContext,
+    // JIT context, holding builder meta information.
+    // pub jit_ctx: JitContext,
 
     /// Saved Program Status Register for all modes but User.
     spsr: Spsr,
@@ -51,7 +51,7 @@ pub struct Arm7TDMI {
     banked_regs: Registers,
 
     /// If the prev. instruction directly **set** r15.
-    pub(super) branch: bool,
+    pub(crate) branch: bool,
 }
 
 #[derive(PartialEq)]
@@ -171,8 +171,8 @@ impl Arm7TDMI {
             ..Default::default()
         };
 
-        // Initialize JitContext, setting flags and detecting the host ISA.
-        let jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
+        // // Initialize JitContext, setting flags and detecting the host ISA.
+        // let jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
 
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
@@ -188,7 +188,7 @@ impl Arm7TDMI {
             regs,
             cpsr: Cpsr(0x1F),
             bus,
-            jit_ctx,
+            // jit_ctx,
             spsr: Cpsr(0),
             banked_regs,
             branch: false,

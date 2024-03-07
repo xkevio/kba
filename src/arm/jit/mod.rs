@@ -68,7 +68,8 @@ pub struct JitTranslator<'ctx> {
     /// Function builder to build functions and instructions.
     builder: FunctionBuilder<'ctx>,
     /// Cache instruction blocks based on the program counter (r15).
-    blocks: HashMap<u32, Vec<Block>>,
+    blocks: HashMap<u32, (Block, usize)>,
+    regs: [Variable; 16],
 }
 
 impl<'ctx> JitTranslator<'ctx> {
@@ -83,30 +84,27 @@ impl<'ctx> JitTranslator<'ctx> {
 
         // Create entry block and seal it immediately.
         let entry_block = builder.create_block();
-
         builder.seal_block(entry_block);
         builder.append_block_params_for_function_params(entry_block);
         builder.switch_to_block(entry_block);
+
+        // Initialize all 16 general purpose registers (r0 - r15) as `Variable` within the JIT.
+        // Makes them usable as mutable variables while still obeying to SSA.
+        let regs = std::array::from_fn(|r| {
+            let reg = Variable::new(r);
+            let zero = builder.ins().iconst(I32, 0);
+
+            builder.declare_var(reg, I32);
+            builder.def_var(reg, zero);
+
+            reg
+        });
 
         Ok(Self {
             builder,
             blocks: HashMap::new(),
             module: &mut jit_ctx.module,
-        })
-    }
-
-    /// Initialize all 16 general purpose registers (r0 - r15) as `Variable` within the JIT.
-    ///
-    /// Makes them usable as mutable variables while still obeying to SSA.
-    fn initialize_gprs(&mut self) -> [Variable; 16] {
-        std::array::from_fn(|r| {
-            let reg = Variable::new(r);
-            let zero = self.builder.ins().iconst(I32, 0);
-
-            self.builder.declare_var(reg, I32);
-            self.builder.def_var(reg, zero);
-
-            reg
+            regs,
         })
     }
 }
