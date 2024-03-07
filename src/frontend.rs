@@ -54,6 +54,13 @@ impl SDLApplication {
     }
 
     pub fn run(&mut self, kba: &mut Gba) -> SdlResult<()> {
+        // TODO.
+        let _jit_translator = kba
+            .cpu
+            .jit_ctx
+            .create_jit_translator()
+            .expect("Failed to initialize JIT.");
+
         let mut texture = self
             .texture_creator
             .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
@@ -83,6 +90,7 @@ impl SDLApplication {
             // todo: vsync delay / sleep.
             // For now, update every 266_666 cycles (60 frames).
             while kba.cycles < 266_666 {
+                // TODO: pass `jit` to opcode functions (change signature for JIT LUT).
                 kba.run();
             }
 

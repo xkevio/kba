@@ -1,7 +1,10 @@
 use std::ops::{Index, IndexMut};
 
 use crate::{
-    arm::arr_with,
+    arm::{
+        arr_with,
+        jit::JitContext,
+    },
     box_arr, fl,
     mmu::{bus::Bus, game_pak::GamePak, Mcu},
 };
@@ -30,7 +33,7 @@ macro_rules! bank {
 include!(concat!(env!("OUT_DIR"), "/arm_instructions.rs"));
 include!(concat!(env!("OUT_DIR"), "/thumb_instructions.rs"));
 
-#[derive(Default)]
+// #[derive(Default)]
 pub struct Arm7TDMI {
     /// 16 registers, most GPR, r14 = LR, r15 = PC.
     pub regs: [u32; 16],
@@ -39,6 +42,8 @@ pub struct Arm7TDMI {
 
     /// The memory bus, owned by the CPU for now.
     pub bus: Bus,
+    /// JIT context, holding builder meta information.
+    pub jit_ctx: JitContext,
 
     /// Saved Program Status Register for all modes but User.
     spsr: Spsr,
@@ -166,9 +171,8 @@ impl Arm7TDMI {
             ..Default::default()
         };
 
-        // Skip BIOS.
-        // regs[13] = 0x0300_7F00;
-        // regs[15] = 0x0800_0000;
+        // Initialize JitContext, setting flags and detecting the host ISA.
+        let jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
 
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
@@ -184,6 +188,7 @@ impl Arm7TDMI {
             regs,
             cpsr: Cpsr(0x1F),
             bus,
+            jit_ctx,
             spsr: Cpsr(0),
             banked_regs,
             branch: false,

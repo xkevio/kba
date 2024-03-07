@@ -4,118 +4,94 @@ use anyhow::Result;
 use cranelift::{
     codegen::{
         entity::EntityRef,
-        ir::{types::I32, AbiParam, Block, Function, InstBuilder, Signature, UserFuncName},
-        isa::{lookup, CallConv},
+        ir::{types::I32, AbiParam, Block, InstBuilder, Signature},
+        isa::CallConv,
         settings::{self, Configurable},
+        Context,
     },
     frontend::{FunctionBuilder, FunctionBuilderContext, Variable},
 };
-use target_lexicon::Triple;
-
-use crate::mmu::bus::Bus;
+use cranelift_jit::{JITBuilder, JITModule};
+use cranelift_module::{DataDescription, Module};
 
 pub mod arm7tdmi;
 pub mod thumb;
 
-/// Saved Program Status Register as an alias for differentiation. Same structure as CPSR.
-// type Spsr = Cpsr;
-/// Each mode has its own banked registers (mostly r13 and r14).
-// #[derive(Default, Clone, Copy)]
-// struct BankedRegisters {
-//     spsr: Spsr,
-//     bank: [u32; 7],
-// }
+/// The basic JIT struct.
+pub struct JitContext {
+    /// The function builder context, which is reused across multiple
+    /// FunctionBuilder instances.
+    builder_context: FunctionBuilderContext,
 
-// /// Initialize `BankedRegister` with SPSR and SP while filling the rest.
-// macro_rules! bank {
-//     (spsr: $spsr:expr, sp: $sp:expr) => {
-//         BankedRegisters {
-//             spsr: $spsr,
-//             bank: arr_with(5, $sp),
-//         }
-//     };
-// }
+    /// The main Cranelift context, which holds the state for codegen.
+    ctx: Context,
 
-// Include the generated LUT at compile time.
-// include!(concat!(env!("OUT_DIR"), "/arm_instructions.rs"));
-// include!(concat!(env!("OUT_DIR"), "/thumb_instructions.rs"));
+    /// The data description, which is to data objects what `ctx` is to functions.
+    data_description: DataDescription,
 
-// #[derive(Default)]
-pub struct Arm7TDMI<'a> {
-    /// 16 registers, most GPR, r14 = LR, r15 = PC.
-    pub regs: [Variable; 16],
-    /// Current Program Status Register.
-    // pub cpsr: Cpsr,
-
-    /// The memory bus, owned by the CPU for now.
-    pub bus: Bus,
-    pub jit: Jit<'a>,
-
-    /// Saved Program Status Register for all modes but User.
-    // spsr: Spsr,
-    /// The other banked registers of the other modes.
-    // banked_regs: Registers,
-
-    /// If the prev. instruction directly **set** r15.
-    pub(super) branch: bool,
+    /// The module, with the jit backend, which manages the JIT'd
+    /// functions.
+    module: JITModule,
 }
 
-#[derive(PartialEq)]
-pub enum State {
-    Arm,
-    Thumb,
-}
+impl JitContext {
+    pub fn new() -> Result<Self> {
+        let mut flag_builder = settings::builder();
+        flag_builder.set("is_pic", "true")?;
+        flag_builder.set("opt_level", "speed")?;
 
-// --- JIT INITIALIZATION --- //
+        let flags = settings::Flags::new(flag_builder);
+        let isa = match cranelift_native::builder() {
+            Ok(isa_builder) => isa_builder.finish(flags)?,
+            Err(err) => panic!("error while looking up target triple: {err}"),
+        };
 
-pub struct JitFunctionContext {
-    func: Function,
-    func_ctx: FunctionBuilderContext,
-}
+        let builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+        let module = JITModule::new(builder);
 
-impl JitFunctionContext {
-    pub fn new(sig: Signature) -> Self {
-        Self {
-            func: Function::with_name_signature(UserFuncName::user(0, 0), sig),
-            func_ctx: FunctionBuilderContext::new(),
-        }
+        Ok(Self {
+            builder_context: FunctionBuilderContext::new(),
+            ctx: module.make_context(),
+            data_description: DataDescription::new(),
+            module,
+        })
+    }
+
+    pub fn create_jit_translator(&mut self) -> Result<JitTranslator<'_>> {
+        JitTranslator::new(self)
     }
 }
 
-/// The basic JIT struct.
-pub struct Jit<'a> {
+/// JIT Translator, builds and generates IR.
+pub struct JitTranslator<'ctx> {
+    module: &'ctx mut JITModule,
     /// Function builder to build functions and instructions.
-    builder: FunctionBuilder<'a>,
+    builder: FunctionBuilder<'ctx>,
     /// Cache instruction blocks based on the program counter (r15).
     blocks: HashMap<u32, Vec<Block>>,
 }
 
-impl<'a> Jit<'a> {
-    pub fn new(jit_ctx: &'a mut JitFunctionContext) -> Result<Self> {
-        let mut builder = settings::builder();
-        builder.set("opt_level", "speed")?;
+impl<'ctx> JitTranslator<'ctx> {
+    pub fn new(jit_ctx: &'ctx mut JitContext) -> Result<Self> {
+        let pointer_type = jit_ctx.module.target_config().pointer_type();
 
-        let flags = settings::Flags::new(builder);
-        let isa = match lookup(Triple::host()) {
-            Ok(isa) => isa.finish(flags)?,
-            Err(err) => panic!("error while looking up target triple: {err}"),
-        };
-
-        let pointer_type = isa.pointer_type();
         let mut sig = Signature::new(CallConv::SystemV);
         sig.params.push(AbiParam::new(pointer_type));
         sig.returns.push(AbiParam::new(pointer_type));
 
-        let mut builder = FunctionBuilder::new(&mut jit_ctx.func, &mut jit_ctx.func_ctx);
+        let mut builder = FunctionBuilder::new(&mut jit_ctx.ctx.func, &mut jit_ctx.builder_context);
 
-        let block = builder.create_block();
-        builder.seal_block(block);
-        builder.append_block_params_for_function_params(block);
-        builder.switch_to_block(block);
+        // Create entry block and seal it immediately.
+        let entry_block = builder.create_block();
+
+        builder.seal_block(entry_block);
+        builder.append_block_params_for_function_params(entry_block);
+        builder.switch_to_block(entry_block);
 
         Ok(Self {
             builder,
             blocks: HashMap::new(),
+            module: &mut jit_ctx.module,
         })
     }
 

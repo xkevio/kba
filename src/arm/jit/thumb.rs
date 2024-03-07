@@ -1,12 +1,20 @@
 //! For the jitted THUMB instructions.
 
-use cranelift::{codegen::{entity::EntityRef, ir::{types::I64, Block, BlockCall, InstBuilder, JumpTable, JumpTableData, ValueListPool}}, frontend::Variable};
+use cranelift::{
+    codegen::{
+        entity::EntityRef,
+        ir::{types::I64, Block, BlockCall, InstBuilder, JumpTable, JumpTableData, ValueListPool},
+    },
+    frontend::Variable,
+};
 
-use super::Arm7TDMI;
+use crate::arm::interpreter::arm7tdmi::Arm7TDMI;
 
-impl Arm7TDMI<'_> {
-    pub fn mov_shifted_reg(&mut self, opcode: u16) {
-        let clir = &mut self.jit.builder;
+use super::JitTranslator;
+
+impl Arm7TDMI {
+    pub fn mov_shifted_reg_jit(&mut self, opcode: u16, jit: &mut JitTranslator) {
+        let clir = &mut jit.builder;
 
         let opcode = clir.ins().iconst(I64, opcode as i64);
         let rd = clir.ins().band_imm(opcode, 0x7);
@@ -26,7 +34,7 @@ impl Arm7TDMI<'_> {
 
         // clir.ins().br_table(op, clir.create_jump_table(
         //     JumpTableData::new(
-        //         BlockCall::new(clir.create_block(), &[], &mut ValueListPool::default()), 
+        //         BlockCall::new(clir.create_block(), &[], &mut ValueListPool::default()),
         //         &[
         //             BlockCall::new(clir.create_block(), &[], &mut ValueListPool::default()),
         //             BlockCall::new(clir.create_block(), &[], &mut ValueListPool::default()),
