@@ -1,6 +1,6 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::codegen::ir::Block;
+use cranelift::codegen::ir::{types::I64, Block, InstBuilder};
 
 use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
 
@@ -43,5 +43,175 @@ impl Arm7TDMI {
         // todo: seal block?
         jit_translator.blocks.insert(self.regs[15], (block, cycles));
         (block, cycles)
+    }
+
+    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, jit: &mut JitTranslator) {
+        let rd = (opcode as usize & 0xF000) >> 12;
+        let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
+        let (op2, carry_out) = self.barrel_shifter::<I>(opcode as u16);
+
+        let clir = &mut jit.builder;
+
+        // Bits 21-24 specify the actual opcode.
+        let operation = (opcode & 0x01E0_0000) >> 21;
+        // Check if TST, TEQ, CMP, CMN.
+        let mut is_intmd = false;
+        // If operand is PC, add 8.
+        let rn = if (opcode & 0x000F_0000) >> 16 == 15 {
+            if !I && (opcode & (1 << 4)) != 0 {
+                rn + 12
+            } else {
+                rn + 8
+            }
+        } else {
+            rn
+        };
+
+        let rn_v = clir.ins().iconst(I64, rn as i64);
+        let op2_v = clir.ins().iconst(I64, op2 as i64);
+
+        let result = match operation {
+            0b0000 => clir.ins().band(rn_v, op2_v),
+            0b0001 => clir.ins().bxor(rn_v, op2_v),
+            0b0010 => clir.ins().usub_overflow(rn_v, op2_v).0,
+            0b0011 => clir.ins().usub_overflow(op2_v, rn_v).0,
+            0b0100 => clir.ins().uadd_overflow(rn_v, op2_v).0,
+            0b0101 => todo!("ADC"),
+            0b0110 => todo!("SBC"),
+            0b0111 => todo!("RSC"),
+            0b1000 => {
+                is_intmd = true;
+                clir.ins().band(rn_v, op2_v)
+            },
+            0b1001 => {
+                is_intmd = true;
+                clir.ins().bxor(rn_v, op2_v)
+            },
+            0b1010 => {
+                is_intmd = true;
+                clir.ins().usub_overflow(rn_v, op2_v).0
+            },
+            0b1011 => {
+                is_intmd = true;
+                clir.ins().uadd_overflow(rn_v, op2_v).0
+            },
+            0b1100 => clir.ins().bor(rn_v, op2_v),
+            0b1101 => op2_v,
+            0b1110 => clir.ins().band_not(rn_v, op2_v),
+            0b1111 => clir.ins().bnot(op2_v),
+            _ => unreachable!()
+        };
+
+        if S {
+            // Do r15 shenanigans and set flags in CPSR.
+        }
+
+        if !is_intmd {
+            self.branch = rd == 15;
+            clir.def_var(jit.regs[rd], result);
+        }
+    }
+
+    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitTranslator) {
+        let offset = (opcode & 0x00FF_FFFF) << 2;
+        let link = opcode & (1 << 24) != 0;
+        let signed_off = (offset << 6) as i32 >> 6;
+
+        let clir = &mut jit.builder;
+        let eight = clir.ins().iconst(I64, 8);
+        let r15 = clir.use_var(jit.regs[15]);
+
+        if link {
+            let four = clir.ins().iconst(I64, 4);
+            let (r15_new, _) = clir.ins().uadd_overflow(r15, four);
+            let r14_new = clir.ins().band_imm(r15_new, !3);
+            
+            clir.def_var(jit.regs[14], r14_new);
+        }
+
+        self.branch = true;
+
+        let r15_new = {
+            let tmp = clir.ins().uadd_overflow(r15, eight);
+            let pc_unaligned = clir.ins().iadd_imm(tmp.0, signed_off as i64);
+            clir.ins().band_imm(pc_unaligned, !3)
+        };
+        clir.def_var(jit.regs[15], r15_new);
+    }
+
+    pub fn hw_signed_data_transfer_jit<
+        const I: bool,
+        const P: bool,
+        const U: bool,
+        const W: bool,
+        const L: bool,
+        const S: bool,
+        const H: bool,
+    >(
+        &mut self,
+        opcode: u32,
+        jit: &mut JitTranslator,
+    ) {
+        let clir = &mut jit.builder;
+        let current_block = clir.current_block().unwrap();
+
+        let rn = (opcode as usize & 0x000F_0000) >> 16;
+        let rd = (opcode as usize & 0xF000) >> 12;
+
+        let _rn_v = clir.ins().iconst(I64, rn as i64);
+        let _rd_v = clir.ins().iconst(I64, rd as i64);
+
+        let offset = if I {
+            clir.ins().iconst(I64, (((opcode & 0xF00) >> 4) | (opcode & 0xF)) as i64)
+        } else {
+            clir.use_var(jit.regs[opcode as usize & 0xF])
+        };
+
+        let mut base_with_offset = if U {
+            let reg_n = clir.use_var(jit.regs[rn]);
+            clir.ins().uadd_overflow(reg_n, offset).0
+        } else {
+            let reg_n = clir.use_var(jit.regs[rn]);
+            clir.ins().usub_overflow(reg_n, offset).0
+        };
+
+        base_with_offset = clir.ins().iadd_imm(base_with_offset, (rn == 15) as i64 * 8);
+
+        let address = if P { base_with_offset } else { clir.use_var(jit.regs[rn]) };
+        let address_cond = clir.ins().urem_imm(address, 2);
+
+        // Align address if necessary and return alongside ror value. No clue if this works.
+        let aligned_block = clir.create_block();
+        clir.switch_to_block(aligned_block);
+        clir.seal_block(aligned_block);
+
+        let aligned_addr = clir.ins().band_imm(address, !1);
+        let eight = clir.ins().iconst(I64, 8);
+        clir.ins().return_(&[aligned_addr, eight]);
+
+        clir.ins().brif(address_cond, aligned_block, &[], current_block, &[]);
+
+        // TODO: load and store with JIT?
+        // if L {
+        //     if !S {
+        //         self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror);
+        //     } else {
+        //         self.regs[rd] = match H {
+        //             false => self.bus.read8(address) as i8 as u32,
+        //             true if address % 2 != 0 => self.bus.read8(address) as i8 as u32,
+        //             true => self.bus.read16(address) as i16 as u32,
+        //         }
+        //     }
+        // } else {
+        //     self.bus.write16(
+        //         aligned_addr,
+        //         self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 },
+        //     );
+        // }
+
+        self.branch = rd == 15 && L;
+        if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
+            clir.def_var(jit.regs[rn], base_with_offset);
+        }
     }
 }
