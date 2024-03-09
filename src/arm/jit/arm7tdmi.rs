@@ -1,6 +1,7 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::codegen::ir::{types::I64, Block, InstBuilder};
+use cranelift::codegen::ir::{types::{I16, I32, I64, I8}, Block, InstBuilder};
+use cranelift_module::Module;
 
 use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
 
@@ -153,16 +154,11 @@ impl Arm7TDMI {
         jit: &mut JitTranslator,
     ) {
         let clir = &mut jit.builder;
-        let current_block = clir.current_block().unwrap();
-
         let rn = (opcode as usize & 0x000F_0000) >> 16;
         let rd = (opcode as usize & 0xF000) >> 12;
 
-        let _rn_v = clir.ins().iconst(I64, rn as i64);
-        let _rd_v = clir.ins().iconst(I64, rd as i64);
-
         let offset = if I {
-            clir.ins().iconst(I64, (((opcode & 0xF00) >> 4) | (opcode & 0xF)) as i64)
+            clir.ins().iconst(I32, (((opcode & 0xF00) >> 4) | (opcode & 0xF)) as i64)
         } else {
             clir.use_var(jit.regs[opcode as usize & 0xF])
         };
@@ -181,33 +177,61 @@ impl Arm7TDMI {
         let address_cond = clir.ins().urem_imm(address, 2);
 
         // Align address if necessary and return alongside ror value. No clue if this works.
-        let aligned_block = clir.create_block();
-        clir.switch_to_block(aligned_block);
-        clir.seal_block(aligned_block);
+        let (aligned_addr, ror) = {
+            let zero = clir.ins().iconst(I32, 0);
+            let eight = clir.ins().iconst(I32, 8);
+            let tmp = clir.ins().band_imm(address, !1);
 
-        let aligned_addr = clir.ins().band_imm(address, !1);
-        let eight = clir.ins().iconst(I64, 8);
-        clir.ins().return_(&[aligned_addr, eight]);
+            (
+                clir.ins().select(address_cond, tmp, address),
+                clir.ins().select(address_cond, eight, zero)
+            )
+        };
 
-        clir.ins().brif(address_cond, aligned_block, &[], current_block, &[]);
+        let r8_func = jit.module.declare_func_in_func(jit.io[0], clir.func);
+        let r16_func = jit.module.declare_func_in_func(jit.io[1], clir.func);
+        let w16_func = jit.module.declare_func_in_func(jit.io[4], clir.func);
 
-        // TODO: load and store with JIT?
-        // if L {
-        //     if !S {
-        //         self.regs[rd] = (self.bus.read16(aligned_addr) as u32).rotate_right(ror);
-        //     } else {
-        //         self.regs[rd] = match H {
-        //             false => self.bus.read8(address) as i8 as u32,
-        //             true if address % 2 != 0 => self.bus.read8(address) as i8 as u32,
-        //             true => self.bus.read16(address) as i16 as u32,
-        //         }
-        //     }
-        // } else {
-        //     self.bus.write16(
-        //         aligned_addr,
-        //         self.regs[rd] as u16 + if rd == 15 { 12 } else { 0 },
-        //     );
-        // }
+        if L {
+            if !S {
+                let mem16 = clir.ins().call(r8_func, &[aligned_addr]);
+                let mem16 = {
+                    let tmp = clir.inst_results(mem16)[0];
+                    clir.ins().rotr(tmp, ror)
+                };
+
+                clir.def_var(jit.regs[15], mem16);
+            } else {
+                let res = match H {
+                    false => {
+                        let mem8 = clir.ins().call(r8_func, &[address]);
+                        let mem8 = clir.inst_results(mem8)[0];
+                        clir.ins().sextend(I8, mem8)
+                    }
+                    true => {
+                        let mem8 = {
+                            let mem8 = clir.ins().call(r8_func, &[address]);
+                            let mem8 = clir.inst_results(mem8)[0];
+                            clir.ins().sextend(I8, mem8)
+                        };
+
+                        let mem16 = {
+                            let mem16 = clir.ins().call(r16_func, &[address]);
+                            let mem16 = clir.inst_results(mem16)[0];
+                            clir.ins().sextend(I16, mem16)
+                        };
+
+                        clir.ins().select(address_cond, mem8, mem16)
+                    }
+                };
+
+                clir.def_var(jit.regs[rd], res);
+            }
+        } else {
+            let rdv = clir.use_var(jit.regs[rd]);
+            let value = clir.ins().iadd_imm(rdv, if rd == 15 { 12 } else { 0 });
+            let _ = clir.ins().call(w16_func, &[aligned_addr, value]);
+        }
 
         self.branch = rd == 15 && L;
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
