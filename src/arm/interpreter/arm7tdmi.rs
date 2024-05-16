@@ -1,10 +1,7 @@
 use std::ops::{Index, IndexMut};
 
 use crate::{
-    arm::{
-        arr_with,
-        jit::JitContext,
-    },
+    arm::arr_with,
     box_arr, fl,
     mmu::{bus::Bus, game_pak::GamePak, Mcu},
 };
@@ -156,7 +153,8 @@ impl From<State> for bool {
 impl Arm7TDMI {
     /// Initialize SP and PC to the correct values.
     pub fn new(rom: &[u8]) -> Self {
-        let regs = [0; 16];
+        // let regs = [0; 16];
+        let regs = arr_with(15, 0x0800_0000);
 
         // Resize ROM to 32 MB always for OOB reads.
         let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];
@@ -171,9 +169,6 @@ impl Arm7TDMI {
             ..Default::default()
         };
 
-        // // Initialize JitContext, setting flags and detecting the host ISA.
-        // let jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
-
         // Set other modes r13 (SP) and SPSR.
         let banked_regs = Registers {
             sys_regs: bank!(spsr: Cpsr(0), sp: 0),
@@ -186,9 +181,8 @@ impl Arm7TDMI {
 
         Self {
             regs,
-            cpsr: Cpsr(0x1F),
+            cpsr: Cpsr(0xF),
             bus,
-            // jit_ctx,
             spsr: Cpsr(0),
             banked_regs,
             branch: false,

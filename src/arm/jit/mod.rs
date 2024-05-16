@@ -4,7 +4,7 @@ use anyhow::Result;
 use cranelift::{
     codegen::{
         entity::EntityRef,
-        ir::{types::{I16, I32, I8}, AbiParam, Block, InstBuilder, Signature},
+        ir::{types::{I16, I32, I8}, AbiParam, Block, Function, InstBuilder, Signature},
         isa::CallConv,
         settings::{self, Configurable},
         Context,
@@ -62,7 +62,7 @@ impl JitContext {
     pub fn new() -> Result<Self> {
         let mut flag_builder = settings::builder();
         flag_builder.set("is_pic", "true")?;
-        flag_builder.set("opt_level", "speed")?;
+        flag_builder.set("opt_level", "none")?;
 
         let flags = settings::Flags::new(flag_builder);
         let isa = match cranelift_native::builder() {
@@ -75,7 +75,7 @@ impl JitContext {
         builder.symbol("read8", Bus::read8 as *const u8);
         builder.symbol("read16", Bus::read16 as *const u8);
         builder.symbol("read32", Bus::read32 as *const u8);
-        // Declare bus write funcitons.
+        // Declare bus write functions.
         builder.symbol("write8", Bus::write8 as *const u8);
         builder.symbol("write16", Bus::write16 as *const u8);
         builder.symbol("write32", Bus::write32 as *const u8);
@@ -106,10 +106,10 @@ impl JitContext {
 
 /// JIT Translator, builds and generates IR.
 pub struct JitTranslator<'ctx> {
-    /// Function builder to build functions and instructions.
-    builder: FunctionBuilder<'ctx>,
+    // / Function builder to build functions and instructions.
+    // builder: FunctionBuilder<'ctx>,
     /// Cache instruction blocks based on the program counter (r15).
-    blocks: HashMap<u32, (Block, usize)>,
+    blocks: HashMap<u32, (Vec<u8>, usize)>,
     /// Refer to the JIT Module to access and declare data/funcs.
     module: &'ctx mut JITModule,
     /// SSA representation of GPRs.
@@ -120,34 +120,33 @@ pub struct JitTranslator<'ctx> {
 
 impl<'ctx> JitTranslator<'ctx> {
     pub fn new(jit_ctx: &'ctx mut JitContext, io: &[FuncId]) -> Result<Self> {
-        let pointer_type = jit_ctx.module.target_config().pointer_type();
+        // let pointer_type = jit_ctx.module.target_config().pointer_type();
 
-        let mut sig = Signature::new(CallConv::SystemV);
-        sig.params.push(AbiParam::new(pointer_type));
-        sig.returns.push(AbiParam::new(pointer_type));
+        // let mut sig = Signature::new(CallConv::SystemV);
+        // sig.params.push(AbiParam::new(pointer_type));
+        // sig.returns.push(AbiParam::new(pointer_type));
+        // let mut builder = FunctionBuilder::new(&mut jit_ctx.ctx.func.clone(), &mut jit_ctx.builder_context);
 
-        let mut builder = FunctionBuilder::new(&mut jit_ctx.ctx.func, &mut jit_ctx.builder_context);
+        // // Create entry block and seal it immediately.
+        // let entry_block = builder.create_block();
+        // builder.seal_block(entry_block);
+        // builder.append_block_params_for_function_params(entry_block);
+        // builder.switch_to_block(entry_block);
 
-        // Create entry block and seal it immediately.
-        let entry_block = builder.create_block();
-        builder.seal_block(entry_block);
-        builder.append_block_params_for_function_params(entry_block);
-        builder.switch_to_block(entry_block);
-
-        // Initialize all 16 general purpose registers (r0 - r15) as `Variable` within the JIT.
-        // Makes them usable as mutable variables while still obeying to SSA.
+        // // Initialize all 16 general purpose registers (r0 - r15) as `Variable` within the JIT.
+        // // Makes them usable as mutable variables while still obeying to SSA.
         let regs = std::array::from_fn(|r| {
             let reg = Variable::new(r);
-            let zero = builder.ins().iconst(I32, 0);
+            // let zero = builder.ins().iconst(I32, 0);
 
-            builder.declare_var(reg, I32);
-            builder.def_var(reg, zero);
+            // builder.declare_var(reg, I32);
+            // builder.def_var(reg, zero);
 
             reg
         });
 
         Ok(Self {
-            builder,
+            // builder,
             blocks: HashMap::new(),
             module: &mut jit_ctx.module,
             regs,

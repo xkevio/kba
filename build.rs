@@ -19,9 +19,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut arm_instrs = String::new();
     let mut thumb_instrs = String::new();
 
+    let arm_path_jit = Path::new(&out_dir).join("arm_instructions_jit.rs");
+    let arm_pre_jit = "pub const ARM_INSTRUCTIONS_JIT: [fn(&mut Arm7TDMI, u32, &mut JitTranslator, &mut FunctionBuilder); 4096] = [\n";
+    let mut arm_instrs_jit = String::new();
+
     // Bits 20-27 and 4-7 are used to index the opcode (2^12 = 4096).
     for i in 0..4096 {
         arm_instrs += &format!("{},\n", decode_arm(i));
+        arm_instrs_jit += &format!("{},\n", decode_arm_jit(i));
     }
 
     // Upper 8 bits are used to index the opcode (2^8 = 256).
@@ -29,11 +34,89 @@ fn main() -> Result<(), Box<dyn Error>> {
         thumb_instrs += &format!("{},\n", decode_thumb(i));
     }
 
+    std::fs::write(arm_path_jit, arm_pre_jit.to_string() + &arm_instrs_jit + "\n];")?;
     std::fs::write(arm_path, arm_pre.to_string() + &arm_instrs + "\n];")?;
     std::fs::write(thumb_path, thumb_pre.to_string() + &thumb_instrs + "\n];")?;
     println!("cargo:rerun-if-changed=build.rs");
 
     Ok(())
+}
+
+/// Decode an ARMv4 opcode based on 12 bits (20-27 and 4-7) with bitmasks.
+fn decode_arm_jit(index: u16) -> String {
+    // if index & 0b1111_1100_1111 == 0b0000_0000_1001 {
+    //     let s_bit = index & (1 << 4) != 0;
+    //     format!("Arm7TDMI::multiply_jit::<{}>", s_bit)
+    // } else if index & 0b1111_1000_1111 == 0b0000_1000_1001 {
+    //     let s_bit = index & (1 << 4) != 0;
+    //     format!("Arm7TDMI::multiply_long_jit::<{}>", s_bit)
+    // } else if index & 0b1111_1011_1111 == 0b0001_0000_1001 {
+    //     let b_bit = index & (1 << 6) != 0;
+    //     format!("Arm7TDMI::swap_jit::<{}>", b_bit)
+    // } else if index & 0b1111_1111_1111 == 0b0001_0010_0001 {
+    //     format!("Arm7TDMI::bx_jit")
+    if index & 0b1110_0000_0000 == 0b1010_0000_0000 {
+        format!("Arm7TDMI::bl_jit")
+    } else if index & 0b1110_0100_1001 == 0b0000_0000_1001 {
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+        let s_bit = index & (1 << 2) != 0;
+        let h_bit = index & (1 << 1) != 0;
+
+        format!(
+            "Arm7TDMI::hw_signed_data_transfer_jit::<false, {}, {}, {}, {}, {}, {}>",
+            p_bit, u_bit, w_bit, l_bit, s_bit, h_bit
+        )
+    } else if index & 0b1110_0100_1001 == 0b0000_0100_1001 {
+        let p_bit = index & (1 << 8) != 0;
+        let u_bit = index & (1 << 7) != 0;
+        let w_bit = index & (1 << 5) != 0;
+        let l_bit = index & (1 << 4) != 0;
+        let s_bit = index & (1 << 2) != 0;
+        let h_bit = index & (1 << 1) != 0;
+
+        format!(
+            "Arm7TDMI::hw_signed_data_transfer_jit::<true, {}, {}, {}, {}, {}, {}>",
+            p_bit, u_bit, w_bit, l_bit, s_bit, h_bit
+        )
+    // } else if index & 0b1110_0000_0000 == 0b1000_0000_0000 {
+    //     let p_bit = index & (1 << 8) != 0;
+    //     let u_bit = index & (1 << 7) != 0;
+    //     let s_bit = index & (1 << 6) != 0;
+    //     let w_bit = index & (1 << 5) != 0;
+    //     let l_bit = index & (1 << 4) != 0;
+
+    //     format!(
+    //         "Arm7TDMI::block_data_transfer_jit::<{}, {}, {}, {}, {}>",
+    //         p_bit, u_bit, s_bit, w_bit, l_bit
+    //     )
+    // } else if index & 0b1101_1001_0000 == 0b0001_0000_0000 {
+    //     let imm = index & (1 << 9) != 0;
+    //     let psr = index & (1 << 6) != 0;
+    //     format!("Arm7TDMI::psr_transfer_jit::<{}, {}>", imm, psr)
+    } else if index & 0b1100_0000_0000 == 0b0000_0000_0000 {
+        let imm = index & (1 << 9) != 0;
+        let s_bit = index & (1 << 4) != 0;
+        format!("Arm7TDMI::data_processing_jit::<{}, {}>", imm, s_bit)
+    // } else if index & 0b1100_0000_0000 == 0b0100_0000_0000 {
+    //     let i_bit = index & (1 << 9) != 0;
+    //     let p_bit = index & (1 << 8) != 0;
+    //     let u_bit = index & (1 << 7) != 0;
+    //     let b_bit = index & (1 << 6) != 0;
+    //     let w_bit = index & (1 << 5) != 0;
+    //     let l_bit = index & (1 << 4) != 0;
+
+    //     format!(
+    //         "Arm7TDMI::single_data_transfer_jit::<{}, {}, {}, {}, {}, {}>",
+    //         i_bit, p_bit, u_bit, b_bit, w_bit, l_bit
+    //     )
+    // } else if index & 0b1111_0000_0000 == 0b1111_0000_0000 {
+    //     format!("Arm7TDMI::swi_jit::<false>")
+    } else {
+        format!("Arm7TDMI::undefined_jit")
+    }
 }
 
 /// Decode an ARMv4 opcode based on 12 bits (20-27 and 4-7) with bitmasks.

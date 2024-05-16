@@ -1,57 +1,108 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::codegen::ir::{types::{I16, I32, I64, I8}, Block, InstBuilder};
+use cranelift::{codegen::{control::ControlPlane, ir::{types::{I16, I32, I64, I8}, AbiParam, InstBuilder, Type}}, frontend::{FunctionBuilder, FunctionBuilderContext}};
 use cranelift_module::Module;
 
 use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
 
 use super::JitTranslator;
 
+include!(concat!(env!("OUT_DIR"), "/arm_instructions_jit.rs"));
+
 impl Arm7TDMI {
-    pub fn get_next_block(&mut self, jit_translator: &mut JitTranslator) -> (Block, usize) {
+    pub fn get_next_block(&mut self, jit_translator: &mut JitTranslator) -> (Vec<u8>, usize) {
+        let mut ctx = jit_translator.module.make_context();
+        ctx.func.signature.returns.push(AbiParam::new(Type::int(32).unwrap()));
+        ctx.set_disasm(true);
+
+        let mut func_ctx = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+
         if jit_translator.blocks.contains_key(&self.regs[15]) {
-            return jit_translator.blocks[&self.regs[15]];
+            return jit_translator.blocks[&self.regs[15]].clone();
         }
 
         let mut cycles = 0;
-        let block = jit_translator.builder.create_block();
-        jit_translator.builder.switch_to_block(block);
+        let block = builder.create_block();
+        builder.switch_to_block(block);
+
+        for reg in jit_translator.regs {
+            let val = if reg.as_u32() < 15 {
+                builder.ins().iconst(I32, 0)
+            } else {
+                builder.ins().iconst(I32, 0x0800_0000)
+            };
+
+            builder.declare_var(reg, I32);
+            builder.def_var(reg, val);
+        }
 
         while !self.branch {
             match self.cpsr.state() {
                 State::Arm => {
                     let opcode = self.bus.read32(self.regs[15]);
+                    println!("{:X?}, r15 = {:X}", opcode, self.regs[15]);
     
                     let cond = (opcode >> 28) & 0xF;
                     let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
     
                     if self.cond(cond as u8) {
                         // TODO: ARM_JIT_LUT that modifies `Block`!
-                        // ARM_INSTRUCTIONS[op_index as usize](self, opcode);
+                        ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit_translator, &mut builder);
                     }
                 }
                 State::Thumb => {
-                    let opcode = self.bus.read16(self.regs[15]);
+                    // let opcode = self.bus.read16(self.regs[15]);
                     // TODO: THUMB_JIT_LUT that modifies `Block`!
                     // THUMB_INSTRUCTIONS[(opcode >> 8) as usize](self, opcode);
                 }
             }
 
             cycles += 1;
-            // TODO: Increase PC.
+            match self.cpsr.state() {
+                State::Arm if !self.branch => {
+                    let pc_old = builder.use_var(jit_translator.regs[15]);
+                    let pc_new = builder.ins().iadd_imm(pc_old, 4);
+                    builder.def_var(jit_translator.regs[15], pc_new);
+                    self.regs[15] += 4;
+                },
+                State::Thumb if !self.branch => {
+                    let pc_old = builder.use_var(jit_translator.regs[15]);
+                    let pc_new = builder.ins().iadd_imm(pc_old, 2);
+                    builder.def_var(jit_translator.regs[15], pc_new);
+                    self.regs[15] += 2;
+                },
+                _ => {},
+            }
         }
 
-        // todo: seal block?
-        jit_translator.blocks.insert(self.regs[15], (block, cycles));
-        (block, cycles)
+        let v15 = builder.use_var(jit_translator.regs[15]);
+        builder.ins().return_(&[v15]);
+        builder.seal_block(block);
+        builder.finalize();
+
+        self.branch = false;
+        println!("{}", ctx.func.display());
+
+        let code = ctx
+            .compile(jit_translator.module.isa(), &mut ControlPlane::default())
+            .unwrap()
+            .code_buffer()
+            .to_vec();
+
+        println!("{}", ctx.compiled_code().unwrap().vcode.as_ref().unwrap());
+        println!("{:X?}", code.clone());
+        jit_translator.blocks.insert(self.regs[15], (code.clone(), cycles));
+        
+        (code, cycles)
     }
 
-    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, jit: &mut JitTranslator) {
+    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
         let rd = (opcode as usize & 0xF000) >> 12;
         let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
         let (op2, carry_out) = self.barrel_shifter::<I>(opcode as u16);
 
-        let clir = &mut jit.builder;
+        let clir = builder;
 
         // Bits 21-24 specify the actual opcode.
         let operation = (opcode & 0x01E0_0000) >> 21;
@@ -113,17 +164,17 @@ impl Arm7TDMI {
         }
     }
 
-    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitTranslator) {
+    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
         let offset = (opcode & 0x00FF_FFFF) << 2;
         let link = opcode & (1 << 24) != 0;
         let signed_off = (offset << 6) as i32 >> 6;
 
-        let clir = &mut jit.builder;
-        let eight = clir.ins().iconst(I64, 8);
+        let clir = builder;
+        let eight = clir.ins().iconst(I32, 8);
         let r15 = clir.use_var(jit.regs[15]);
 
         if link {
-            let four = clir.ins().iconst(I64, 4);
+            let four = clir.ins().iconst(I32, 4);
             let (r15_new, _) = clir.ins().uadd_overflow(r15, four);
             let r14_new = clir.ins().band_imm(r15_new, !3);
             
@@ -152,8 +203,9 @@ impl Arm7TDMI {
         &mut self,
         opcode: u32,
         jit: &mut JitTranslator,
+        builder: &mut FunctionBuilder
     ) {
-        let clir = &mut jit.builder;
+        let clir = builder;
         let rn = (opcode as usize & 0x000F_0000) >> 16;
         let rd = (opcode as usize & 0xF000) >> 12;
 
@@ -237,5 +289,9 @@ impl Arm7TDMI {
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
             clir.def_var(jit.regs[rn], base_with_offset);
         }
+    }
+
+    pub fn undefined_jit(&mut self, _opcode: u32, _jit: &mut JitTranslator, _builder: &mut FunctionBuilder) {
+        unimplemented!()
     }
 }

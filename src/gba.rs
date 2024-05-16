@@ -24,15 +24,22 @@ impl Gba {
             self.cpu.bus.halt = false;
         }
 
-        if !self.cpu.bus.halt {
-            self.cpu.dispatch_irq();
-            // self.cpu.cycle();
+        let block_cycles = 
+            if !self.cpu.bus.halt {
+                self.cpu.dispatch_irq();
 
-            let (block, cycles) = self.cpu.get_next_block(jit_translator);
-            // todo: execute block and adjust cycles.
-        }
+                let (_block, cycles) = self.cpu.get_next_block(jit_translator);
+                // unsafe {
+                //     let block_fn = std::mem::transmute::<_, fn()>(block.as_ptr());
+                //     block_fn();
+                // }
 
-        self.cpu.bus.tick(self.cycles);
-        self.cycles += 1;
+                cycles
+            } else {
+                1
+            };
+
+        for i in 0..block_cycles { self.cpu.bus.tick(self.cycles + i) }
+        self.cycles += block_cycles;
     }
 }
