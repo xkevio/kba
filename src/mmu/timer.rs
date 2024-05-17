@@ -42,7 +42,7 @@ impl Timers {
 }
 
 impl Mcu for Timers {
-    fn read16(&mut self, address: u32) -> u16 {
+    extern "C" fn read16(&mut self, address: u32) -> u16 {
         match address {
             0x0100 => self[0].counter,
             0x0102 => u16::from(self[0]),
@@ -56,14 +56,14 @@ impl Mcu for Timers {
         }
     }
 
-    fn read8(&mut self, address: u32) -> u8 {
+    extern "C" fn read8(&mut self, address: u32) -> u8 {
         match address & 1 == 0 {
             true => self.read16(address) as u8,
             false => (self.read16(address & !1) >> 8) as u8,
         }
     }
 
-    fn write16(&mut self, address: u32, value: u16) {
+    extern "C" fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0100 => self[0].reload = value,
             0x0102 => self[0].apply_tmr_cnt::<0>(value),
@@ -77,7 +77,7 @@ impl Mcu for Timers {
         }
     }
 
-    fn write8(&mut self, address: u32, value: u8) {
+    extern "C" fn write8(&mut self, address: u32, value: u8) {
         // Make sure to "read" reload to modify it on write and not "read" counter.
         let [lo, hi] = match (address & !1) % 4 {
             0 => self[((address as usize & !1) - 0x0100) / 4].reload,
@@ -89,6 +89,28 @@ impl Mcu for Timers {
             true => self.write16(address, (hi as u16) << 8 | value as u16),
             false => self.write16(address & !1, (value as u16) << 8 | lo as u16),
         }
+    }
+    
+    extern "C" fn read32(&mut self, address: u32) -> u32 {
+        u32::from_le_bytes([
+            self.read8(address),
+            self.read8(address + 1),
+            self.read8(address + 2),
+            self.read8(address + 3),
+        ])
+    }
+    
+    extern "C" fn write32(&mut self, address: u32, value: u32) {
+        let [a, b, c, d] = value.to_le_bytes();
+    
+        self.write8(address, a);
+        self.write8(address + 1, b);
+        self.write8(address + 2, c);
+        self.write8(address + 3, d);
+    }
+    
+    fn raw_read16(&mut self, _address: u32) -> u16 {
+        unimplemented!()
     }
 }
 

@@ -6,7 +6,7 @@ use std::ops::{Index, IndexMut};
 pub struct DMAChannels([DMA; 4]);
 
 impl Mcu for DMAChannels {
-    fn read16(&mut self, address: u32) -> u16 {
+    extern "C" fn read16(&mut self, address: u32) -> u16 {
         match address {
             0x00BA => u16::from(self[0]),
             0x00C6 => u16::from(self[1]),
@@ -16,14 +16,14 @@ impl Mcu for DMAChannels {
         }
     }
 
-    fn read8(&mut self, address: u32) -> u8 {
+    extern "C" fn read8(&mut self, address: u32) -> u8 {
         match address & 1 == 0 {
             true => self.read16(address) as u8,
             false => (self.read16(address & !1) >> 8) as u8,
         }
     }
 
-    fn write16(&mut self, address: u32, value: u16) {
+    extern "C" fn write16(&mut self, address: u32, value: u16) {
         match address {
             // Assign the DMA source address, 27 bit (0-2) and 28 bit for 3.
             0x00B0 => self[0].src = value as u32,
@@ -60,7 +60,7 @@ impl Mcu for DMAChannels {
         }
     }
 
-    fn write8(&mut self, address: u32, value: u8) {
+    extern "C" fn write8(&mut self, address: u32, value: u8) {
         let [lo, hi] = self.raw_read16(address & !1).to_le_bytes();
         match address & 1 == 0 {
             true => self.write16(address, (hi as u16) << 8 | value as u16),
@@ -96,6 +96,24 @@ impl Mcu for DMAChannels {
             0x00BA | 0x00C6 | 0x00D2 | 0x00DE => self.read16(_address),
             _ => 0,
         }
+    }
+    
+    extern "C" fn read32(&mut self, address: u32) -> u32 {
+        u32::from_le_bytes([
+            self.read8(address),
+            self.read8(address + 1),
+            self.read8(address + 2),
+            self.read8(address + 3),
+        ])
+    }
+    
+    extern "C" fn write32(&mut self, address: u32, value: u32) {
+        let [a, b, c, d] = value.to_le_bytes();
+    
+        self.write8(address, a);
+        self.write8(address + 1, b);
+        self.write8(address + 2, c);
+        self.write8(address + 3, d);
     }
 }
 

@@ -1,9 +1,9 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::{codegen::{control::ControlPlane, ir::{types::{I16, I32, I64, I8}, AbiParam, InstBuilder, Type}}, frontend::{FunctionBuilder, FunctionBuilderContext}};
+use cranelift::{codegen::{control::ControlPlane, ir::{types::{I16, I32, I64, I8}, AbiParam, Inst, InstBuilder, MemFlags, Type, Value}}, frontend::{FunctionBuilder, FunctionBuilderContext}};
 use cranelift_module::Module;
 
-use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
+use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, Cpsr, State}, mmu::Mcu};
 
 use super::JitTranslator;
 
@@ -11,45 +11,37 @@ include!(concat!(env!("OUT_DIR"), "/arm_instructions_jit.rs"));
 
 impl Arm7TDMI {
     pub fn get_next_block(&mut self, jit_translator: &mut JitTranslator) -> (Vec<u8>, usize) {
+        let beginning_of_block = self.regs[15];
+        if jit_translator.blocks.contains_key(&self.regs[15]) {
+            // println!("CACHE HIT AT {:X}", beginning_of_block - 0xC0);
+            return jit_translator.blocks[&self.regs[15]].clone();
+        }
+
         let mut ctx = jit_translator.module.make_context();
-        ctx.func.signature.returns.push(AbiParam::new(Type::int(32).unwrap()));
+
+        ctx.func.signature.params.push(AbiParam::new(jit_translator.module.isa().pointer_type()));
+        ctx.func.signature.returns.push(AbiParam::new(jit_translator.module.isa().pointer_type()));
+        
         ctx.set_disasm(true);
 
         let mut func_ctx = FunctionBuilderContext::new();
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
-
-        if jit_translator.blocks.contains_key(&self.regs[15]) {
-            return jit_translator.blocks[&self.regs[15]].clone();
-        }
-
+        
         let mut cycles = 0;
         let block = builder.create_block();
+        builder.append_block_params_for_function_params(block);
         builder.switch_to_block(block);
-
-        for reg in jit_translator.regs {
-            let val = if reg.as_u32() < 15 {
-                builder.ins().iconst(I32, 0)
-            } else {
-                builder.ins().iconst(I32, 0x0800_0000)
-            };
-
-            builder.declare_var(reg, I32);
-            builder.def_var(reg, val);
-        }
 
         while !self.branch {
             match self.cpsr.state() {
                 State::Arm => {
                     let opcode = self.bus.read32(self.regs[15]);
-                    println!("{:X?}, r15 = {:X}", opcode, self.regs[15]);
-    
+
                     let cond = (opcode >> 28) & 0xF;
                     let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
-    
-                    if self.cond(cond as u8) {
-                        // TODO: ARM_JIT_LUT that modifies `Block`!
-                        ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit_translator, &mut builder);
-                    }
+
+                    if cond == 0b1011 { jit_translator.cmp = true; }
+                    ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit_translator, &mut builder);
                 }
                 State::Thumb => {
                     // let opcode = self.bus.read16(self.regs[15]);
@@ -59,25 +51,34 @@ impl Arm7TDMI {
             }
 
             cycles += 1;
+
             match self.cpsr.state() {
                 State::Arm if !self.branch => {
-                    let pc_old = builder.use_var(jit_translator.regs[15]);
+                    let pc_old = self.reg(&mut builder, 15);
                     let pc_new = builder.ins().iadd_imm(pc_old, 4);
-                    builder.def_var(jit_translator.regs[15], pc_new);
+
+                    self.set_reg(&mut builder, 15, pc_new);
                     self.regs[15] += 4;
                 },
                 State::Thumb if !self.branch => {
-                    let pc_old = builder.use_var(jit_translator.regs[15]);
+                    let pc_old = self.reg(&mut builder, 15);
                     let pc_new = builder.ins().iadd_imm(pc_old, 2);
-                    builder.def_var(jit_translator.regs[15], pc_new);
+                    
+                    self.set_reg(&mut builder, 15, pc_new);
                     self.regs[15] += 2;
                 },
-                _ => {},
+                _ => {
+                    // println!("branch!")
+                },
             }
         }
 
-        let v15 = builder.use_var(jit_translator.regs[15]);
-        builder.ins().return_(&[v15]);
+        // println!("end: {:X}", self.regs[15] - 0xC0);
+
+        let result = builder.block_params(block)[0];
+        // let cpsr = builder.block_params(block)[1];
+
+        builder.ins().return_(&[result]);
         builder.seal_block(block);
         builder.finalize();
 
@@ -91,16 +92,25 @@ impl Arm7TDMI {
             .to_vec();
 
         println!("{}", ctx.compiled_code().unwrap().vcode.as_ref().unwrap());
-        println!("{:X?}", code.clone());
-        jit_translator.blocks.insert(self.regs[15], (code.clone(), cycles));
-        
+        jit_translator.blocks.insert(beginning_of_block, (code.clone(), cycles));
         (code, cycles)
     }
 
-    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
+    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, _jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
         let rd = (opcode as usize & 0xF000) >> 12;
-        let rn = self.regs[(opcode as usize & 0x000F_0000) >> 16];
-        let (op2, carry_out) = self.barrel_shifter::<I>(opcode as u16);
+        let rn_v = self.reg(builder, (opcode as i32 & 0x000F_0000) >> 16);
+        let is_shift = ((opcode & 0xFFFF_0000) >> 16) == 0xE1A0; 
+
+        let op2_v = if !I {
+            let op = opcode as u16;
+            let amount = if is_shift { (op as u32 & 0x0F80) >> 7 } else { 0 };
+            let rm_val = self.reg(builder, op as i32 & 0xF);
+            builder.ins().ishl_imm(rm_val, amount as i64)
+        } else {
+            let ror = (opcode >> 8) & 0xF;
+            let x1 = builder.ins().iconst(I32, opcode as i64 & 0xFF);
+            builder.ins().rotr_imm(x1, ror as i64 * 2)
+        };
 
         let clir = builder;
 
@@ -109,25 +119,24 @@ impl Arm7TDMI {
         // Check if TST, TEQ, CMP, CMN.
         let mut is_intmd = false;
         // If operand is PC, add 8.
-        let rn = if (opcode & 0x000F_0000) >> 16 == 15 {
-            if !I && (opcode & (1 << 4)) != 0 {
-                rn + 12
-            } else {
-                rn + 8
-            }
-        } else {
-            rn
-        };
+        // let rn = if (opcode & 0x000F_0000) >> 16 == 15 {
+        //     if !I && (opcode & (1 << 4)) != 0 {
+        //         rn + 12
+        //     } else {
+        //         rn + 8
+        //     }
+        // } else {
+        //     rn
+        // };
 
-        let rn_v = clir.ins().iconst(I64, rn as i64);
-        let op2_v = clir.ins().iconst(I64, op2 as i64);
+        // let rn_v = clir.ins().iconst(I32, rn as i64);
 
         let result = match operation {
             0b0000 => clir.ins().band(rn_v, op2_v),
             0b0001 => clir.ins().bxor(rn_v, op2_v),
             0b0010 => clir.ins().usub_overflow(rn_v, op2_v).0,
             0b0011 => clir.ins().usub_overflow(op2_v, rn_v).0,
-            0b0100 => clir.ins().uadd_overflow(rn_v, op2_v).0,
+            0b0100 => clir.ins().iadd(rn_v, op2_v),
             0b0101 => todo!("ADC"),
             0b0110 => todo!("SBC"),
             0b0111 => todo!("RSC"),
@@ -160,7 +169,7 @@ impl Arm7TDMI {
 
         if !is_intmd {
             self.branch = rd == 15;
-            clir.def_var(jit.regs[rd], result);
+            self.set_reg(clir, rd as i32, result);
         }
     }
 
@@ -169,26 +178,34 @@ impl Arm7TDMI {
         let link = opcode & (1 << 24) != 0;
         let signed_off = (offset << 6) as i32 >> 6;
 
-        let clir = builder;
-        let eight = clir.ins().iconst(I32, 8);
-        let r15 = clir.use_var(jit.regs[15]);
+        // if !jit.cmp {
+        //     return;
+        // }
+
+        let r15 = self.reg(builder, 15);
 
         if link {
-            let four = clir.ins().iconst(I32, 4);
-            let (r15_new, _) = clir.ins().uadd_overflow(r15, four);
-            let r14_new = clir.ins().band_imm(r15_new, !3);
+            let r15_new = builder.ins().iadd_imm(r15, 4);
+            let r14_new = builder.ins().band_imm(r15_new, !3);
             
-            clir.def_var(jit.regs[14], r14_new);
+            self.set_reg(builder, 14, r14_new);
         }
 
         self.branch = true;
 
         let r15_new = {
-            let tmp = clir.ins().uadd_overflow(r15, eight);
-            let pc_unaligned = clir.ins().iadd_imm(tmp.0, signed_off as i64);
-            clir.ins().band_imm(pc_unaligned, !3)
+            let tmp = builder.ins().iadd_imm(r15, 8);
+            let pc_unaligned = if jit.cmp {
+                // builder.ins().iadd_imm(tmp, -signed_off as i64)
+                // FIXME: hack!
+                builder.ins().iconst(I32, 0x0800_0034 + 0xC0)
+            } else {
+                builder.ins().iadd_imm(tmp, signed_off as i64)
+            };
+            builder.ins().band_imm(pc_unaligned, !3)
         };
-        clir.def_var(jit.regs[15], r15_new);
+
+        self.set_reg(builder, 15, r15_new);
     }
 
     pub fn hw_signed_data_transfer_jit<
@@ -212,20 +229,20 @@ impl Arm7TDMI {
         let offset = if I {
             clir.ins().iconst(I32, (((opcode & 0xF00) >> 4) | (opcode & 0xF)) as i64)
         } else {
-            clir.use_var(jit.regs[opcode as usize & 0xF])
+            self.reg(clir, opcode as i32 & 0xF)
         };
 
         let mut base_with_offset = if U {
-            let reg_n = clir.use_var(jit.regs[rn]);
-            clir.ins().uadd_overflow(reg_n, offset).0
+            let reg_n = self.reg(clir, rn as i32);
+            clir.ins().iadd(reg_n, offset)
         } else {
-            let reg_n = clir.use_var(jit.regs[rn]);
-            clir.ins().usub_overflow(reg_n, offset).0
+            let reg_n = self.reg(clir, rn as i32);
+            clir.ins().isub(reg_n, offset)
         };
 
         base_with_offset = clir.ins().iadd_imm(base_with_offset, (rn == 15) as i64 * 8);
 
-        let address = if P { base_with_offset } else { clir.use_var(jit.regs[rn]) };
+        let address = if P { base_with_offset } else { self.reg(clir, rn as i32) };
         let address_cond = clir.ins().urem_imm(address, 2);
 
         // Align address if necessary and return alongside ror value. No clue if this works.
@@ -252,7 +269,7 @@ impl Arm7TDMI {
                     clir.ins().rotr(tmp, ror)
                 };
 
-                clir.def_var(jit.regs[15], mem16);
+                self.set_reg(clir, 15, mem16);
             } else {
                 let res = match H {
                     false => {
@@ -277,21 +294,32 @@ impl Arm7TDMI {
                     }
                 };
 
-                clir.def_var(jit.regs[rd], res);
+                self.set_reg(clir, rd as i32, res);
             }
         } else {
-            let rdv = clir.use_var(jit.regs[rd]);
+            let rdv = self.reg(clir, rd as i32);
             let value = clir.ins().iadd_imm(rdv, if rd == 15 { 12 } else { 0 });
-            let _ = clir.ins().call(w16_func, &[aligned_addr, value]);
+            let value16 = clir.ins().ireduce(I16, value);
+            let _ = clir.ins().call(w16_func, &[aligned_addr, value16]);
         }
 
         self.branch = rd == 15 && L;
         if ((W || !P) && (rn != rd)) || (!L && (W || !P)) {
-            clir.def_var(jit.regs[rn], base_with_offset);
+            self.set_reg(clir, rn as i32, base_with_offset);
         }
     }
 
     pub fn undefined_jit(&mut self, _opcode: u32, _jit: &mut JitTranslator, _builder: &mut FunctionBuilder) {
         unimplemented!()
+    }
+
+    fn reg(&self, clir: &mut FunctionBuilder, r: i32) -> Value {
+        let reg_adr = clir.block_params(clir.current_block().unwrap())[0];
+        clir.ins().load(I32, MemFlags::new(), reg_adr, r * 4)
+    }
+
+    fn set_reg(&self, clir: &mut FunctionBuilder, r: i32, val: Value) {
+        let reg_adr = clir.block_params(clir.current_block().unwrap())[0];
+        clir.ins().store(MemFlags::new(), val, reg_adr, r * 4);
     }
 }

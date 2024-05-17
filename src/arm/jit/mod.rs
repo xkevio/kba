@@ -62,7 +62,7 @@ impl JitContext {
     pub fn new() -> Result<Self> {
         let mut flag_builder = settings::builder();
         flag_builder.set("is_pic", "true")?;
-        flag_builder.set("opt_level", "none")?;
+        flag_builder.set("opt_level", "speed_and_size")?;
 
         let flags = settings::Flags::new(flag_builder);
         let isa = match cranelift_native::builder() {
@@ -116,6 +116,7 @@ pub struct JitTranslator<'ctx> {
     regs: [Variable; 16],
     /// I/O functions to access the bus.
     io: [FuncId; 6],
+    cmp: bool,
 }
 
 impl<'ctx> JitTranslator<'ctx> {
@@ -151,6 +152,7 @@ impl<'ctx> JitTranslator<'ctx> {
             module: &mut jit_ctx.module,
             regs,
             io: io.try_into()?,
+            cmp: false,
         })
     }
 }

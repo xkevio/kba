@@ -40,7 +40,7 @@ macro_rules! set_bits {
 }
 
 pub trait Mcu {
-    fn read32(&mut self, address: u32) -> u32 {
+    extern "C" fn read32(&mut self, address: u32) -> u32 {
         u32::from_le_bytes([
             self.read8(address),
             self.read8(address + 1),
@@ -49,7 +49,7 @@ pub trait Mcu {
         ])
     }
 
-    fn write32(&mut self, address: u32, value: u32) {
+    extern "C" fn write32(&mut self, address: u32, value: u32) {
         let [a, b, c, d] = value.to_le_bytes();
 
         self.write8(address, a);
@@ -58,18 +58,18 @@ pub trait Mcu {
         self.write8(address + 3, d);
     }
 
-    fn read16(&mut self, address: u32) -> u16 {
+    extern "C" fn read16(&mut self, address: u32) -> u16 {
         u16::from_le_bytes([self.read8(address), self.read8(address + 1)])
     }
-    fn write16(&mut self, address: u32, value: u16) {
+    extern "C" fn write16(&mut self, address: u32, value: u16) {
         let [a, b] = value.to_le_bytes();
 
         self.write8(address, a);
         self.write8(address + 1, b);
     }
 
-    fn read8(&mut self, address: u32) -> u8;
-    fn write8(&mut self, address: u32, value: u8);
+    extern "C" fn read8(&mut self, address: u32) -> u8;
+    extern "C" fn write8(&mut self, address: u32, value: u8);
 
     /// Raw read - meaning no effect on the bus and will also
     /// read non-readable values, just for convenience (I/O).

@@ -33,7 +33,7 @@ include!(concat!(env!("OUT_DIR"), "/thumb_instructions.rs"));
 // #[derive(Default)]
 pub struct Arm7TDMI {
     /// 16 registers, most GPR, r14 = LR, r15 = PC.
-    pub regs: [u32; 16],
+    pub regs: [u32; 17],
     /// Current Program Status Register.
     pub cpsr: Cpsr,
 
@@ -153,8 +153,8 @@ impl From<State> for bool {
 impl Arm7TDMI {
     /// Initialize SP and PC to the correct values.
     pub fn new(rom: &[u8]) -> Self {
-        // let regs = [0; 16];
-        let regs = arr_with(15, 0x0800_0000);
+        let mut regs = arr_with(15, 0x0800_0000);
+        regs[16] = 0xF;
 
         // Resize ROM to 32 MB always for OOB reads.
         let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];

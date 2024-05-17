@@ -879,7 +879,7 @@ impl Ppu {
 }
 
 impl Mcu for Ppu {
-    fn read16(&mut self, address: u32) -> u16 {
+    extern "C" fn read16(&mut self, address: u32) -> u16 {
         match address {
             0x0000 => self.dispcnt.dispcnt(),
             0x0004 => self.dispstat.dispstat(),
@@ -895,14 +895,14 @@ impl Mcu for Ppu {
         }
     }
 
-    fn read8(&mut self, address: u32) -> u8 {
+    extern "C" fn read8(&mut self, address: u32) -> u8 {
         match address & 1 == 0 {
             true => self.read16(address) as u8,
             false => (self.read16(address & !1) >> 8) as u8,
         }
     }
 
-    fn write16(&mut self, address: u32, value: u16) {
+    extern "C" fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt(value),
             0x0004 => self
@@ -974,7 +974,7 @@ impl Mcu for Ppu {
         }
     }
 
-    fn write8(&mut self, address: u32, value: u8) {
+    extern "C" fn write8(&mut self, address: u32, value: u8) {
         let [lo, hi] = self.raw_read16(address & !1).to_le_bytes();
         match address & 1 == 0 {
             true => self.write16(address, (hi as u16) << 8 | value as u16),

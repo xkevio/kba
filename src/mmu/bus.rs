@@ -178,7 +178,7 @@ impl Bus {
 
 impl Mcu for Bus {
     #[rustfmt::skip]
-    fn read8(&mut self, address: u32) -> u8 {
+    extern "C" fn read8(&mut self, address: u32) -> u8 {
         match address >> 24 {
             0x00 if address < 0x4000 => self.bios[address as usize],
             0x02 => self.wram[address as usize % 0x0004_0000],
@@ -222,7 +222,7 @@ impl Mcu for Bus {
     }
 
     #[rustfmt::skip]
-    fn write8(&mut self, address: u32, value: u8) {
+    extern "C" fn write8(&mut self, address: u32, value: u8) {
         match address >> 24 {
             0x02 => self.wram[address as usize % 0x0004_0000] = value,
             0x03 => self.wram[(address as usize % 0x8000) + 0x0004_0000] = value,
