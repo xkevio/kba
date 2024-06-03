@@ -1,26 +1,24 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::{codegen::{control::ControlPlane, ir::{types::{I16, I32, I64, I8}, AbiParam, Inst, InstBuilder, MemFlags, Type, Value}}, frontend::{FunctionBuilder, FunctionBuilderContext}};
-use cranelift_module::Module;
+use cranelift::{codegen::ir::{types::{I16, I32, I8}, AbiParam, InstBuilder, MemFlags, Value}, frontend::{FunctionBuilder, FunctionBuilderContext}};
+use cranelift_module::{Module, Linkage};
 
-use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, Cpsr, State}, mmu::Mcu};
+use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
 
-use super::JitTranslator;
+use super::JitContext;
 
 include!(concat!(env!("OUT_DIR"), "/arm_instructions_jit.rs"));
 
 impl Arm7TDMI {
-    pub fn get_next_block(&mut self, jit_translator: &mut JitTranslator) -> (Vec<u8>, usize) {
+    pub fn get_next_block(&mut self, jit: &mut JitContext) -> (*const u8, usize) {
         let beginning_of_block = self.regs[15];
-        if jit_translator.blocks.contains_key(&self.regs[15]) {
-            // println!("CACHE HIT AT {:X}", beginning_of_block - 0xC0);
-            return jit_translator.blocks[&self.regs[15]].clone();
+        if jit.blocks.contains_key(&self.regs[15]) {
+            return jit.blocks[&self.regs[15]].clone();
         }
 
-        let mut ctx = jit_translator.module.make_context();
-
-        ctx.func.signature.params.push(AbiParam::new(jit_translator.module.isa().pointer_type()));
-        ctx.func.signature.returns.push(AbiParam::new(jit_translator.module.isa().pointer_type()));
+        let mut ctx = jit.module.make_context();
+        ctx.func.signature.params.push(AbiParam::new(jit.module.isa().pointer_type()));
+        ctx.func.signature.returns.push(AbiParam::new(jit.module.isa().pointer_type()));
         
         ctx.set_disasm(true);
 
@@ -40,8 +38,8 @@ impl Arm7TDMI {
                     let cond = (opcode >> 28) & 0xF;
                     let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
-                    if cond == 0b1011 { jit_translator.cmp = true; }
-                    ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit_translator, &mut builder);
+                    if cond == 0b1011 { jit.cmp = true; }
+                    ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit, &mut builder);
                 }
                 State::Thumb => {
                     // let opcode = self.bus.read16(self.regs[15]);
@@ -67,36 +65,33 @@ impl Arm7TDMI {
                     self.set_reg(&mut builder, 15, pc_new);
                     self.regs[15] += 2;
                 },
-                _ => {
-                    // println!("branch!")
-                },
+                _ => {},
             }
         }
 
-        // println!("end: {:X}", self.regs[15] - 0xC0);
-
         let result = builder.block_params(block)[0];
-        // let cpsr = builder.block_params(block)[1];
-
+        
         builder.ins().return_(&[result]);
         builder.seal_block(block);
         builder.finalize();
-
+        
         self.branch = false;
-        println!("{}", ctx.func.display());
+        // println!("{}", ctx.func.display());
+        
+        let id = jit.module.declare_function(&format!("{:X}", beginning_of_block), Linkage::Export, &ctx.func.signature).unwrap();
+        jit.module.define_function(id, &mut ctx).unwrap();
+        // println!("define and compile");
+        jit.module.clear_context(&mut ctx);
+        // println!("clear context");
+        jit.module.finalize_definitions().unwrap();
+        // println!("relocation");
 
-        let code = ctx
-            .compile(jit_translator.module.isa(), &mut ControlPlane::default())
-            .unwrap()
-            .code_buffer()
-            .to_vec();
-
-        println!("{}", ctx.compiled_code().unwrap().vcode.as_ref().unwrap());
-        jit_translator.blocks.insert(beginning_of_block, (code.clone(), cycles));
+        let code = jit.module.get_finalized_function(id);
+        jit.blocks.insert(beginning_of_block, (code, cycles));
         (code, cycles)
     }
 
-    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, _jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
+    pub fn data_processing_jit<const I: bool, const S: bool>(&mut self, opcode: u32, _jit: &mut JitContext, builder: &mut FunctionBuilder) {
         let rd = (opcode as usize & 0xF000) >> 12;
         let rn_v = self.reg(builder, (opcode as i32 & 0x000F_0000) >> 16);
         let is_shift = ((opcode & 0xFFFF_0000) >> 16) == 0xE1A0; 
@@ -173,7 +168,7 @@ impl Arm7TDMI {
         }
     }
 
-    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitTranslator, builder: &mut FunctionBuilder) {
+    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitContext, builder: &mut FunctionBuilder) {
         let offset = (opcode & 0x00FF_FFFF) << 2;
         let link = opcode & (1 << 24) != 0;
         let signed_off = (offset << 6) as i32 >> 6;
@@ -219,7 +214,7 @@ impl Arm7TDMI {
     >(
         &mut self,
         opcode: u32,
-        jit: &mut JitTranslator,
+        jit: &mut JitContext,
         builder: &mut FunctionBuilder
     ) {
         let clir = builder;
@@ -309,7 +304,7 @@ impl Arm7TDMI {
         }
     }
 
-    pub fn undefined_jit(&mut self, _opcode: u32, _jit: &mut JitTranslator, _builder: &mut FunctionBuilder) {
+    pub fn undefined_jit(&mut self, _opcode: u32, _jit: &mut JitContext, _builder: &mut FunctionBuilder) {
         unimplemented!()
     }
 

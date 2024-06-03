@@ -55,7 +55,6 @@ impl SDLApplication {
     pub fn run(&mut self, kba: &mut Gba) -> SdlResult<()> {
         // Initialize JitContext, setting flags and detecting the host ISA.
         let mut jit_ctx = JitContext::new().expect("Failed to initialize JIT context.");
-        let mut jit_translator = jit_ctx.create_jit_translator().unwrap();
 
         let mut texture = self
             .texture_creator
@@ -87,7 +86,7 @@ impl SDLApplication {
             // For now, update every 266_666 cycles (60 frames).
             while kba.cycles < 266_666 {
                 // TODO: pass `jit` to opcode functions (change signature for JIT LUT).
-                kba.run(&mut jit_translator);
+                kba.run(&mut jit_ctx);
             }
 
             // Update frame and convert Option pixel values to corresponding colors.

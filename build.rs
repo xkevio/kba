@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut thumb_instrs = String::new();
 
     let arm_path_jit = Path::new(&out_dir).join("arm_instructions_jit.rs");
-    let arm_pre_jit = "pub const ARM_INSTRUCTIONS_JIT: [fn(&mut Arm7TDMI, u32, &mut JitTranslator, &mut FunctionBuilder); 4096] = [\n";
+    let arm_pre_jit = "pub const ARM_INSTRUCTIONS_JIT: [fn(&mut Arm7TDMI, u32, &mut JitContext, &mut FunctionBuilder); 4096] = [\n";
     let mut arm_instrs_jit = String::new();
 
     // Bits 20-27 and 4-7 are used to index the opcode (2^12 = 4096).

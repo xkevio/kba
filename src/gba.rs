@@ -1,6 +1,6 @@
-use memmap2::MmapOptions;
+// use memmap2::MmapOptions;
 
-use crate::arm::{interpreter::arm7tdmi::Arm7TDMI, jit::JitTranslator};
+use crate::arm::{interpreter::arm7tdmi::Arm7TDMI, jit::JitContext};
 
 pub const LCD_WIDTH: usize = 240;
 pub const LCD_HEIGHT: usize = 160;
@@ -21,7 +21,7 @@ impl Gba {
         }
     }
 
-    pub fn run(&mut self, jit_translator: &mut JitTranslator) {
+    pub fn run(&mut self, jit: &mut JitContext) {
         if self.cpu.bus.halt && (self.cpu.bus.ie.0 & self.cpu.bus.iff.0) != 0 {
             self.cpu.bus.halt = false;
         }
@@ -30,9 +30,9 @@ impl Gba {
             if !self.cpu.bus.halt {
                 self.cpu.dispatch_irq();
 
-                println!("{:X?}", self.cpu.regs);
-                let (block, cycles) = self.cpu.get_next_block(jit_translator);
-                self.run_block(&block);
+                // println!("{:X?}", self.cpu.regs);
+                let (block, cycles) = self.cpu.get_next_block(jit);
+                self.run_block(block);
 
                 cycles
             } else {
@@ -43,17 +43,17 @@ impl Gba {
         self.cycles += block_cycles;
     }
 
-    fn run_block(&mut self, code: &[u8]) {
-        let mut buffer = MmapOptions::new()
-            .len(code.len())
-            .map_anon()
-            .unwrap();
+    fn run_block(&mut self, code: *const u8) {
+        // let mut buffer = MmapOptions::new()
+        //     .len(code.len())
+        //     .map_anon()
+        //     .unwrap();
 
-        buffer.copy_from_slice(code);
-        let buffer = buffer.make_exec().unwrap();
+        // buffer.copy_from_slice(code);
+        // let buffer = buffer.make_exec().unwrap();
 
         unsafe {
-            let code_fn: unsafe extern "C" fn(*mut u32) -> *mut u32 = std::mem::transmute(buffer.as_ptr());
+            let code_fn: unsafe extern "C" fn(*mut u32) -> *mut u32 = std::mem::transmute(code);
             let gprs = code_fn(self.cpu.regs.as_mut_ptr());
             let gprs_slice = std::slice::from_raw_parts_mut(gprs, 17);
             self.cpu.regs.copy_from_slice(&gprs_slice);

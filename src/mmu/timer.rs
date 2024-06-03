@@ -109,7 +109,7 @@ impl Mcu for Timers {
         self.write8(address + 3, d);
     }
     
-    fn raw_read16(&mut self, _address: u32) -> u16 {
+    extern "C" fn raw_read16(&mut self, _address: u32) -> u16 {
         unimplemented!()
     }
 }

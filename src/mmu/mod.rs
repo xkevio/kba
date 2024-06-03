@@ -73,7 +73,7 @@ pub trait Mcu {
 
     /// Raw read - meaning no effect on the bus and will also
     /// read non-readable values, just for convenience (I/O).
-    fn raw_read16(&mut self, _address: u32) -> u16 {
+    extern "C" fn raw_read16(&mut self, _address: u32) -> u16 {
         unimplemented!()
     }
 }

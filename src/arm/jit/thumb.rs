@@ -1,10 +1,7 @@
 //! For the jitted THUMB instructions.
 
 use cranelift::codegen::ir::{types::I64, InstBuilder};
-
 use crate::arm::interpreter::arm7tdmi::Arm7TDMI;
-
-use super::JitTranslator;
 
 impl Arm7TDMI {
     // TODO: less IR for constant extraction.

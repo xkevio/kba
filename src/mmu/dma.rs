@@ -68,7 +68,7 @@ impl Mcu for DMAChannels {
         }
     }
 
-    fn raw_read16(&mut self, _address: u32) -> u16 {
+    extern "C" fn raw_read16(&mut self, _address: u32) -> u16 {
         match _address {
             0x00B0 => self[0].src as u16,
             0x00B2 => (self[0].src >> 16) as u16,
