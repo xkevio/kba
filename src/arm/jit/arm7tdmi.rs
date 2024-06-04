@@ -1,6 +1,6 @@
 //! For the jitted ARM32 instructions.
 
-use cranelift::{codegen::ir::{types::{I16, I32, I8}, AbiParam, InstBuilder, MemFlags, Value}, frontend::{FunctionBuilder, FunctionBuilderContext}};
+use cranelift::{codegen::ir::{types::{I16, I32, I64, I8}, AbiParam, InstBuilder, MemFlags, Value}, frontend::{FunctionBuilder, FunctionBuilderContext}};
 use cranelift_module::{Module, Linkage};
 
 use crate::{arm::interpreter::arm7tdmi::{Arm7TDMI, State}, mmu::Mcu};
@@ -295,7 +295,8 @@ impl Arm7TDMI {
             let rdv = self.reg(clir, rd as i32);
             let value = clir.ins().iadd_imm(rdv, if rd == 15 { 12 } else { 0 });
             let value16 = clir.ins().ireduce(I16, value);
-            let _ = clir.ins().call(w16_func, &[aligned_addr, value16]);
+            let b = clir.ins().iconst(I64, std::ptr::addr_of_mut!(self.bus) as i64);
+            let _ = clir.ins().call(w16_func, &[b, aligned_addr, value16]);
         }
 
         self.branch = rd == 15 && L;

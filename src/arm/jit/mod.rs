@@ -19,6 +19,7 @@ macro_rules! link_io_funcs {
     ($module:expr, read, $bits:expr) => {
         paste! {{
             let mut [<sigr $bits>] = $module.make_signature();
+            [<sigr $bits>].params.push(AbiParam::new($module.isa().pointer_type()));
             [<sigr $bits>].params.push(AbiParam::new(I32));
             [<sigr $bits>].returns.push(AbiParam::new([<I $bits>]));
 
@@ -28,6 +29,7 @@ macro_rules! link_io_funcs {
     ($module:expr, write, $bits:expr) => {
         paste! {{
             let mut [<sigw $bits>] = $module.make_signature();
+            [<sigw $bits>].params.push(AbiParam::new($module.isa().pointer_type()));
             [<sigw $bits>].params.push(AbiParam::new(I32));
             [<sigw $bits>].params.push(AbiParam::new([<I $bits>]));
 
