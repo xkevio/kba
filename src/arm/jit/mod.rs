@@ -22,7 +22,7 @@ macro_rules! link_io_funcs {
             [<sigr $bits>].params.push(AbiParam::new(I32));
             [<sigr $bits>].returns.push(AbiParam::new([<I $bits>]));
 
-            $module.declare_function(concat!("read", $bits), Linkage::Local, &[<sigr $bits>])
+            $module.declare_function(concat!("read", $bits), Linkage::Import, &[<sigr $bits>])
         }}
     };
     ($module:expr, write, $bits:expr) => {
@@ -31,7 +31,7 @@ macro_rules! link_io_funcs {
             [<sigw $bits>].params.push(AbiParam::new(I32));
             [<sigw $bits>].params.push(AbiParam::new([<I $bits>]));
 
-            $module.declare_function(concat!("write", $bits), Linkage::Local, &[<sigw $bits>])
+            $module.declare_function(concat!("write", $bits), Linkage::Import, &[<sigw $bits>])
         }}
     };
 }
