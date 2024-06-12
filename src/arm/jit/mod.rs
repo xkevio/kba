@@ -46,7 +46,6 @@ pub struct JitContext {
     blocks: HashMap<u32, (*const u8, usize)>,
     /// I/O functions to access the bus.
     io: [FuncId; 6],
-    cmp: bool,
 }
 
 impl JitContext {
@@ -78,8 +77,6 @@ impl JitContext {
             module,
             blocks: HashMap::new(),
             io,
-            cmp: false
-
         })
     }
 

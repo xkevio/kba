@@ -35,10 +35,9 @@ impl Arm7TDMI {
                 State::Arm => {
                     let opcode = self.bus.read32(self.regs[15]);
 
-                    let cond = (opcode >> 28) & 0xF;
+                    let _cond = (opcode >> 28) & 0xF;
                     let op_index = ((opcode & 0x0FF0_0000) >> 16) | ((opcode & 0x00F0) >> 4);
 
-                    if cond == 0b1011 { jit.cmp = true; }
                     ARM_INSTRUCTIONS_JIT[op_index as usize](self, opcode, jit, &mut builder);
                 }
                 State::Thumb => {
@@ -168,14 +167,10 @@ impl Arm7TDMI {
         }
     }
 
-    pub fn bl_jit(&mut self, opcode: u32, jit: &mut JitContext, builder: &mut FunctionBuilder) {
+    pub fn bl_jit(&mut self, opcode: u32, _jit: &mut JitContext, builder: &mut FunctionBuilder) {
         let offset = (opcode & 0x00FF_FFFF) << 2;
         let link = opcode & (1 << 24) != 0;
         let signed_off = (offset << 6) as i32 >> 6;
-
-        // if !jit.cmp {
-        //     return;
-        // }
 
         let r15 = self.reg(builder, 15);
 
@@ -187,17 +182,13 @@ impl Arm7TDMI {
         }
 
         self.branch = true;
+        let c15 = ((self.regs[15] + 8).wrapping_add_signed(signed_off)) & !3;
 
+        // TODO: fix signed offset in IR
         let r15_new = {
-            let tmp = builder.ins().iadd_imm(r15, 8);
-            let pc_unaligned = if jit.cmp {
-                // builder.ins().iadd_imm(tmp, -signed_off as i64)
-                // FIXME: hack!
-                builder.ins().iconst(I32, 0x0800_0034 + 0xC0)
-            } else {
-                builder.ins().iadd_imm(tmp, signed_off as i64)
-            };
-            builder.ins().band_imm(pc_unaligned, !3)
+            // let tmp = builder.ins().iadd_imm(r15, 8);
+            builder.ins().iconst(I32, c15 as i64)
+            // builder.ins().band_imm(pc_unaligned, !3)
         };
 
         self.set_reg(builder, 15, r15_new);
@@ -255,32 +246,33 @@ impl Arm7TDMI {
         let r8_func = jit.module.declare_func_in_func(jit.io[0], clir.func);
         let r16_func = jit.module.declare_func_in_func(jit.io[1], clir.func);
         let w16_func = jit.module.declare_func_in_func(jit.io[4], clir.func);
+        let jit_bus = clir.ins().iconst(I64, std::ptr::addr_of_mut!(self.bus) as i64);
 
         if L {
             if !S {
-                let mem16 = clir.ins().call(r8_func, &[aligned_addr]);
+                let mem16 = clir.ins().call(r16_func, &[jit_bus, aligned_addr]);
                 let mem16 = {
                     let tmp = clir.inst_results(mem16)[0];
                     clir.ins().rotr(tmp, ror)
                 };
 
-                self.set_reg(clir, 15, mem16);
+                self.set_reg(clir, rd as i32, mem16);
             } else {
                 let res = match H {
                     false => {
-                        let mem8 = clir.ins().call(r8_func, &[address]);
+                        let mem8 = clir.ins().call(r8_func, &[jit_bus, address]);
                         let mem8 = clir.inst_results(mem8)[0];
                         clir.ins().sextend(I8, mem8)
                     }
                     true => {
                         let mem8 = {
-                            let mem8 = clir.ins().call(r8_func, &[address]);
+                            let mem8 = clir.ins().call(r8_func, &[jit_bus, address]);
                             let mem8 = clir.inst_results(mem8)[0];
                             clir.ins().sextend(I8, mem8)
                         };
 
                         let mem16 = {
-                            let mem16 = clir.ins().call(r16_func, &[address]);
+                            let mem16 = clir.ins().call(r16_func, &[jit_bus, address]);
                             let mem16 = clir.inst_results(mem16)[0];
                             clir.ins().sextend(I16, mem16)
                         };
@@ -295,8 +287,7 @@ impl Arm7TDMI {
             let rdv = self.reg(clir, rd as i32);
             let value = clir.ins().iadd_imm(rdv, if rd == 15 { 12 } else { 0 });
             let value16 = clir.ins().ireduce(I16, value);
-            let b = clir.ins().iconst(I64, std::ptr::addr_of_mut!(self.bus) as i64);
-            let _ = clir.ins().call(w16_func, &[b, aligned_addr, value16]);
+            let _ = clir.ins().call(w16_func, &[jit_bus, aligned_addr, value16]);
         }
 
         self.branch = rd == 15 && L;
