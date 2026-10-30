@@ -94,7 +94,7 @@ impl Mcu for DMAChannels {
             0x00DC => self[3].word_count,
 
             0x00BA | 0x00C6 | 0x00D2 | 0x00DE => self.read16(_address),
-            _ => 0
+            _ => 0,
         }
     }
 }

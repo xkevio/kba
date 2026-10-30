@@ -1,14 +1,12 @@
 use std::collections::HashSet;
 
-use derivative::Derivative;
-use proc_bitfield::{bitfield, BitRange, ConvRaw};
+use educe::Educe;
+use proc_bitfield::{ConvRaw, bitfield, bits, set_bits};
 use seq_macro::seq;
 
 use crate::{
-    bits,
     gba::{LCD_HEIGHT, LCD_WIDTH},
-    mmu::{irq::IF, Mcu},
-    set_bits,
+    mmu::{Mcu, irq::IF},
 };
 
 use super::{
@@ -20,8 +18,8 @@ const HDRAW_LEN: u16 = 1006;
 const TOTAL_LEN: u16 = 1232;
 const TOTAL_LINES: u8 = 227;
 
-#[derive(Derivative)]
-#[derivative(Default)]
+#[derive(Educe)]
+#[educe(Default)]
 pub struct Ppu {
     pub dispcnt: DISPCNT,
     pub dispstat: DISPSTAT,
@@ -51,9 +49,9 @@ pub struct Ppu {
 
     /// Mosaic sizes for BG and OBJ.
     pub mosaic: MOSAIC,
-    #[derivative(Default(value = "[[None; 512]; 4]"))]
+    #[educe(Default = [[None; 512]; 4])]
     bg_mosaic_v_buf: [[Option<u16>; 512]; 4],
-    #[derivative(Default(value = "[Obj::default(); 512]"))]
+    #[educe(Default = [Obj::default(); 512])]
     obj_mosaic_v_buf: [Obj; 512],
 
     /// Window X horizontal and vertical dimensions.
@@ -65,14 +63,14 @@ pub struct Ppu {
     /// All obj coordinates that have `ObjMode = Window`.
     obj_window_buf: HashSet<(usize, usize)>,
 
-    #[derivative(Default(value = "vec![None; LCD_WIDTH * LCD_HEIGHT]"))]
+    #[educe(Default = vec![None; LCD_WIDTH * LCD_HEIGHT])]
     pub buffer: Vec<Option<u16>>,
 
     /// Current to-be-drawn line from the backgrounds, one for each prio.
-    #[derivative(Default(value = "[[None; 512]; 4]"))]
+    #[educe(Default = [[None; 512]; 4])]
     current_bg_line: [[Option<u16>; 512]; 4],
     /// Current to-be-drawn line for sprites.
-    #[derivative(Default(value = "[Obj::default(); 512]"))]
+    #[educe(Default = [Obj::default(); 512])]
     current_sprite_line: [Obj; 512],
 
     /// Up to 128 sprites from OAM for the current LY.
@@ -331,7 +329,7 @@ impl Ppu {
 
         const SCR_SIZE_LUT_W: [usize; 4] = [256, 512, 256, 512];
         const SCR_SIZE_LUT_H: [usize; 4] = [256, 256, 512, 512];
-        
+
         let (scr_w, scr_h) = (
             SCR_SIZE_LUT_W[bg_cnt.screen_size() as usize],
             SCR_SIZE_LUT_H[bg_cnt.screen_size() as usize],
@@ -571,19 +569,19 @@ impl Ppu {
 
                 if !sprite.mosaic {
                     if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
-                        self.current_sprite_line[screen_x] = Obj { 
-                            px: Some(px), 
-                            prio: sprite.prio, 
+                        self.current_sprite_line[screen_x] = Obj {
+                            px: Some(px),
+                            prio: sprite.prio,
                             alpha: sprite.obj_mode == ObjMode::SemiTransparent,
                             window: sprite.obj_mode == ObjMode::Window,
                         };
                     }
                 } else {
                     if screen_x % (mosaic_h + 1) == 0 && self.vcount.ly() as usize % (mosaic_v + 1) == 0 {
-                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window { 
-                            self.current_sprite_line[screen_x] = Obj { 
-                                px: Some(px), 
-                                prio: sprite.prio, 
+                        if px_idx != 0 && sprite.obj_mode != ObjMode::Window {
+                            self.current_sprite_line[screen_x] = Obj {
+                                px: Some(px),
+                                prio: sprite.prio,
                                 alpha: sprite.obj_mode == ObjMode::SemiTransparent,
                                 window: sprite.obj_mode == ObjMode::Window,
                             };
@@ -639,8 +637,8 @@ impl Ppu {
                     $($win => {
                         let sp_out = if self.$win_reg.0 & (1 << (4 + $offset)) != 0 { $sp } else { None };
                         let bg_out = if self.$win_reg.0 & (1 << ($layer + $offset)) != 0 { $bg } else { None };
-    
-                        (sp_out, bg_out)  
+
+                        (sp_out, bg_out)
                     })*
                 }
             };
@@ -660,7 +658,10 @@ impl Ppu {
                     continue;
                 }
 
-                let (sp, bg) = if self.dispcnt.win0() || self.dispcnt.win1() || self.dispcnt.obj_win() {
+                let (sp, bg) = if self.dispcnt.win0()
+                    || self.dispcnt.win1()
+                    || self.dispcnt.obj_win()
+                {
                     compose_win_px!(win, sp, bg, prio_layer,
                         Window::Win0 | Window::Win1 => winin; if win == Window::Win0 { 0 } else { 8 },
                         Window::WinOut => winout; 0,
@@ -671,18 +672,18 @@ impl Ppu {
                 };
 
                 /*
-                    If the current sprite pixel has a higher priority (lower value), 
-                    use it first and if its None, use background pixel.
-                    
-                    Else, use the background pixel directly iff there is a layer between
-                    this background layer and the sprite layer. Otherwise, bg first then sp.
-                 */
+                   If the current sprite pixel has a higher priority (lower value),
+                   use it first and if its None, use background pixel.
+
+                   Else, use the background pixel directly iff there is a layer between
+                   this background layer and the sprite layer. Otherwise, bg first then sp.
+                */
                 final_px = final_px.or_else(|| {
                     if self.current_sprite_line[x].prio <= self.bgxcnt[prio_layer].prio() {
                         sp.or(bg)
                     } else {
                         if ((prio_layer + 1)..self.current_sprite_line[x].prio as usize)
-                            .any(|x| is_bg_enabled & (1 << x) != 0) 
+                            .any(|x| is_bg_enabled & (1 << x) != 0)
                         {
                             bg
                         } else {
@@ -732,7 +733,9 @@ impl Ppu {
 
             let window = self.in_window(x, self.vcount.ly() as usize);
             let window_sfx = match window {
-                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => true,
+                _ if !self.dispcnt.win0() && !self.dispcnt.win1() && !self.dispcnt.obj_win() => {
+                    true
+                }
                 Window::Win0 => self.winin.win0_col(),
                 Window::Win1 => self.winin.win1_col(),
                 Window::WinOut => self.winout.win_col_out(),
@@ -807,7 +810,8 @@ impl Ppu {
                         self.bldalpha.evb(),
                     );
                 }
-                self.current_sprite_line[x].px = self.current_sprite_line[x].px.map(|_| layers.0[0]);
+                self.current_sprite_line[x].px =
+                    self.current_sprite_line[x].px.map(|_| layers.0[0]);
             } else if window_sfx {
                 match color_effect {
                     ColorEffect::AlphaBlending => {
@@ -833,9 +837,14 @@ impl Ppu {
                     ColorEffect::None => return,
                 }
 
-                let layer_idx = if layers.2[0] == 4 { layers.2[1] } else { layers.2[0] };
+                let layer_idx = if layers.2[0] == 4 {
+                    layers.2[1]
+                } else {
+                    layers.2[0]
+                };
                 if enabled_bgs & (1 << layer_idx) != 0 {
-                    self.current_bg_line[layer_idx][x] = self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
+                    self.current_bg_line[layer_idx][x] =
+                        self.current_bg_line[layer_idx][x].map(|_| layers.0[0]);
                 }
             }
         }
@@ -894,7 +903,9 @@ impl Mcu for Ppu {
     fn write16(&mut self, address: u32, value: u16) {
         match address {
             0x0000 => self.dispcnt.set_dispcnt(value),
-            0x0004 => self.dispstat.set_dispstat((value & !0b111) | self.dispstat.0 & 0b111),
+            0x0004 => self
+                .dispstat
+                .set_dispstat((value & !0b111) | self.dispstat.0 & 0b111),
             0x0008 => self.bgxcnt[0].set_bg_control(value),
             0x000A => self.bgxcnt[1].set_bg_control(value),
             0x000C => self.bgxcnt[2].set_bg_control(value),
@@ -912,19 +923,19 @@ impl Mcu for Ppu {
             0x0024 => self.bgxpc[0] = value as i16,
             0x0026 => self.bgxpd[0] = value as i16,
             0x0028 => {
-                set_bits!(self.bgxx[0], 0..=15, value);
+                set_bits!(self.bgxx[0], 0..=15 = value);
                 self.internal_ref_xx[0] = self.bgxx[0];
             }
             0x002A => {
-                set_bits!(self.bgxx[0], 16..=27, value & 0xFFF);
+                set_bits!(self.bgxx[0], 16..=27 = value & 0xFFF);
                 self.internal_ref_xx[0] = self.bgxx[0];
             }
             0x002C => {
-                set_bits!(self.bgxy[0], 0..=15, value);
+                set_bits!(self.bgxy[0], 0..=15 = value);
                 self.internal_ref_xy[0] = self.bgxy[0];
             }
             0x002E => {
-                set_bits!(self.bgxy[0], 16..=27, value & 0xFFF);
+                set_bits!(self.bgxy[0], 16..=27 = value & 0xFFF);
                 self.internal_ref_xy[0] = self.bgxy[0];
             }
             0x0030 => self.bgxpa[1] = value as i16,
@@ -932,19 +943,19 @@ impl Mcu for Ppu {
             0x0034 => self.bgxpc[1] = value as i16,
             0x0036 => self.bgxpd[1] = value as i16,
             0x0038 => {
-                set_bits!(self.bgxx[1], 0..=15, value);
+                set_bits!(self.bgxx[1], 0..=15 = value);
                 self.internal_ref_xx[1] = self.bgxx[1];
             }
             0x003A => {
-                set_bits!(self.bgxx[1], 16..=27, value & 0xFFF);
+                set_bits!(self.bgxx[1], 16..=27 = value & 0xFFF);
                 self.internal_ref_xx[1] = self.bgxx[1];
             }
             0x003C => {
-                set_bits!(self.bgxy[1], 0..=15, value);
+                set_bits!(self.bgxy[1], 0..=15 = value);
                 self.internal_ref_xy[1] = self.bgxy[1];
             }
             0x003E => {
-                set_bits!(self.bgxy[1], 16..=27, value & 0xFFF);
+                set_bits!(self.bgxy[1], 16..=27 = value & 0xFFF);
                 self.internal_ref_xy[1] = self.bgxy[1];
             }
             0x0040 => self.winxh[0] = value,

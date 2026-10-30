@@ -1,4 +1,4 @@
-use proc_bitfield::{bitfield, ConvRaw};
+use proc_bitfield::{ConvRaw, bitfield};
 
 #[derive(Debug, ConvRaw)]
 pub enum Interrupt {

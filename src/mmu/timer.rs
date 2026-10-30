@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use super::{irq::IF, Mcu};
+use super::{Mcu, irq::IF};
 use proc_bitfield::ConvRaw;
 
 /// Tuple struct to hold the four timers and manage read/writes.

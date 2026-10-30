@@ -1,16 +1,17 @@
 use paste::paste;
-use sdl2::{
+use sdl3::{
+    EventPump,
     event::Event,
     keyboard::Scancode,
-    pixels::PixelFormatEnum,
-    render::{Canvas, Texture, TextureCreator},
+    pixels::PixelFormat,
+    render::{Canvas, ScaleMode, Texture, TextureCreator},
     video::{Window, WindowContext},
-    EventPump,
 };
 
 use crate::{
+    SdlResult,
     gba::{Gba, LCD_HEIGHT, LCD_WIDTH},
-    ppu, SdlResult,
+    ppu,
 };
 
 macro_rules! process_scancodes {
@@ -33,17 +34,17 @@ pub struct SDLApplication {
 
 impl SDLApplication {
     pub fn new(title: &str) -> SdlResult<Self> {
-        let sdl_context = sdl2::init()?;
+        let sdl_context = sdl3::init()?;
         let video_subsystem = sdl_context.video()?;
 
         let window = video_subsystem
             .window(title, LCD_WIDTH as u32 * 2, LCD_HEIGHT as u32 * 2)
             .position_centered()
             .build()
-            .map_err(|e| e.to_string())?;
+            .expect("window data should not be malformed");
 
         let event_pump = sdl_context.event_pump()?;
-        let canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let canvas = window.into_canvas();
         let texture_creator = canvas.texture_creator();
 
         Ok(Self {
@@ -56,8 +57,9 @@ impl SDLApplication {
     pub fn run(&mut self, kba: &mut Gba) -> SdlResult<()> {
         let mut texture = self
             .texture_creator
-            .create_texture_streaming(PixelFormatEnum::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
-            .map_err(|e| e.to_string())?;
+            .create_texture_streaming(PixelFormat::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
+            .expect("texture creation should not fail, possible overflow");
+        texture.set_scale_mode(ScaleMode::Nearest);
 
         'main: loop {
             for event in self.event_pump.poll_iter() {
@@ -80,7 +82,7 @@ impl SDLApplication {
                 r => S
             );
 
-            // todo: vsync delay / sleep.
+            // TODO: vsync delay / sleep.
             // For now, update every 266_666 cycles (60 frames).
             while kba.cycles < 266_666 {
                 kba.run();

@@ -1,14 +1,14 @@
-use proc_bitfield::{bitfield, BitRange};
+use proc_bitfield::{bitfield, bits, set_bits};
 
 use super::{
+    Mcu,
     dma::{AddrControl, DMAChannels, StartTiming},
     game_pak::GamePak,
     irq::{IE, IF, IME},
     timer::Timers,
-    Mcu,
 };
 
-use crate::{bits, box_arr, ppu::lcd::Ppu, set_bits};
+use crate::{box_arr, ppu::lcd::Ppu};
 
 pub struct Bus {
     /// BIOS - System ROM (needs to be provided).
@@ -73,15 +73,11 @@ impl Default for Bus {
 
 impl Bus {
     pub fn tick(&mut self, cycles: usize) {
-        self.ppu.cycle(
-            &*self.vram, 
-            &self.palette_ram, 
-            &self.oam, 
-            &mut self.iff,
-        );
+        self.ppu
+            .cycle(&*self.vram, &self.palette_ram, &self.oam, &mut self.iff);
         self.timers.tick(&mut self.iff, cycles);
 
-        /* 
+        /*
         The following DMA checks can still be optimized if they are only called
         directly when HBlank or VBlank happens, instead this still checks stuff
         every cycle but doesn't run it every cycle.
@@ -96,7 +92,7 @@ impl Bus {
             match self.ppu.current_mode {
                 Mode::HBlank => self.dma_transfer(StartTiming::HBlank),
                 Mode::VBlank => self.dma_transfer(StartTiming::VBlank),
-                Mode::HDraw => {},
+                Mode::HDraw => {}
             }
 
             self.ppu.prev_mode = self.ppu.current_mode;
@@ -129,9 +125,11 @@ impl Bus {
             // TODO: Special start (Video Capture) timing and wow, this would be nicer with a scheduler.
             if channels[ch].enable {
                 if start_timing == dma_type
-                    || start_timing == dma_type && self.ppu.dispstat.hblank() && !self.ppu.dispstat.vblank()
-                    || start_timing == dma_type && self.ppu.dispstat.vblank() 
-                    // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
+                    || start_timing == dma_type
+                        && self.ppu.dispstat.hblank()
+                        && !self.ppu.dispstat.vblank()
+                    || start_timing == dma_type && self.ppu.dispstat.vblank()
+                // || start_timing == StartTiming::Special && ch == 3 && self.ppu.vcount.ly() >= 2 && self.ppu.vcount.ly() <= 162 && self.ppu.vid_capture
                 {
                     for _ in 0..word_count {
                         if channels[ch].transfer_type {
@@ -141,7 +139,7 @@ impl Bus {
                             let data = self.read16(src_addr);
                             self.write16(dst_addr, data);
                         }
-                        
+
                         src_addr = match src_addr_control {
                             AddrControl::Increment => src_addr + addr_delta,
                             AddrControl::Decrement => src_addr - addr_delta,
@@ -149,7 +147,9 @@ impl Bus {
                         };
 
                         dst_addr = match dst_addr_control {
-                            AddrControl::Increment | AddrControl::IncReload => dst_addr + addr_delta,
+                            AddrControl::Increment | AddrControl::IncReload => {
+                                dst_addr + addr_delta
+                            }
                             AddrControl::Decrement => dst_addr - addr_delta,
                             AddrControl::Fixed => dst_addr,
                         };
@@ -165,7 +165,11 @@ impl Bus {
 
                     // self.ppu.vid_capture = false;
                     self.dma_channels[ch].src = src_addr;
-                    self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload { channels[ch].dst } else { dst_addr };
+                    self.dma_channels[ch].dst = if dst_addr_control == AddrControl::IncReload {
+                        channels[ch].dst
+                    } else {
+                        dst_addr
+                    };
                 }
             }
         }
@@ -210,7 +214,7 @@ impl Mcu for Bus {
                 } else if address == 0x0E00_0001 {
                     0x13
                 } else {
-                    self.game_pak.sram[address as usize % 0x0001_0000]   
+                    self.game_pak.sram[address as usize % 0x0001_0000]
                 }
             }
             _ => 0,
@@ -226,18 +230,18 @@ impl Mcu for Bus {
                 addr @ (0x0000..=0x004D | 0x0050..=0x0054) => self.ppu.write8(addr, value),
                 addr @ 0x00B0..=0x00DF => self.dma_channels.write8(addr, value),
                 addr @ 0x0100..=0x010F => self.timers.write8(addr, value),
-                0x0088 => set_bits!(self.soundbias, 0..=7, value),
-                0x0089 => set_bits!(self.soundbias, 8..=15, value),
-                0x008A => set_bits!(self.soundbias, 16..=23, value),
-                0x008B => set_bits!(self.soundbias, 24..=31, value),
-                0x0200 => set_bits!(self.ie.0, 0..=7, value),
-                0x0201 => set_bits!(self.ie.0, 8..=15, value),
+                0x0088 => set_bits!(self.soundbias, 0..=7 = value),
+                0x0089 => set_bits!(self.soundbias, 8..=15 = value),
+                0x008A => set_bits!(self.soundbias, 16..=23 = value),
+                0x008B => set_bits!(self.soundbias, 24..=31 = value),
+                0x0200 => set_bits!(self.ie.0, 0..=7 = value),
+                0x0201 => set_bits!(self.ie.0, 8..=15 = value),
                 0x0202 => self.iff.set_iff((self.iff.iff() & !(value as u16)) & 0x3FFF),
                 0x0203 => self.iff.set_iff((self.iff.iff() & !((value as u16) << 8)) & 0x3FFF),
                 0x0208 => self.ime.set_enabled(value & 1 != 0),
-                0x0209 => set_bits!(self.ime.0, 8..=15, value),
-                0x020A => set_bits!(self.ime.0, 16..=23, value),
-                0x020B => set_bits!(self.ime.0, 24..=31, value),
+                0x0209 => set_bits!(self.ime.0, 8..=15 = value),
+                0x020A => set_bits!(self.ime.0, 16..=23 = value),
+                0x020B => set_bits!(self.ime.0, 24..=31 = value),
                 0x0301 => self.halt = (value >> 7) == 0,
                 _ => {}
             },

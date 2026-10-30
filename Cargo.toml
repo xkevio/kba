@@ -1,15 +1,13 @@
 [package]
 name = "kba"
 version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+edition = "2024"
 
 [dependencies]
-anyhow = "1.0.75"
-derivative = "2.2.0"
-itertools = "0.11.0"
-paste = "1.0.14"
-proc-bitfield = "0.3.0"
-sdl2 = "0.35.2"
-seq-macro = "0.3.5"
+anyhow = "1.0.104"
+educe = { version = "0.8.1", default-features = false, features = ["Default", "full"] }
+itertools = "0.15.0"
+paste = "1.0.15"
+proc-bitfield = "0.5.3"
+sdl3 = "0.20.0"
+seq-macro = "0.3.6"
