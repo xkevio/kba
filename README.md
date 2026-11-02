@@ -1,9 +1,9 @@
-# kba -- Game Boy Advance Emulator
+# kba: Game Boy Advance Emulator
 
 ## Usage
 
 ```
-kba: Gameboy Advance Emulator
+kba: Game Boy Advance Emulator
 
 Usage: kba -r=ARG -b=ARG [-s]
 

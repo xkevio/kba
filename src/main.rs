@@ -12,7 +12,7 @@ mod gba;
 mod mmu;
 mod ppu;
 
-/// kba: Gameboy Advance Emulator
+/// kba: Game Boy Advance Emulator
 #[derive(Debug, Clone, Bpaf)]
 #[bpaf(options)]
 struct KbaCliOptions {
@@ -34,10 +34,8 @@ fn main() -> Result<()> {
         skip_bios,
     } = kba_cli_options().run();
 
-    let mut sdl_application = SDLApplication::new(&format!(
-        "κba - {:?}",
-        rom.file_name().unwrap().to_str().unwrap()
-    ))?;
+    let mut sdl_application =
+        SDLApplication::new(&format!("κba - {:?}", rom.file_name().unwrap_or_default()))?;
 
     let rom = std::fs::read(&rom)?;
     let bios = std::fs::read(bios)?;
