@@ -11,3 +11,4 @@ paste = "1.0.15"
 proc-bitfield = "0.5.3"
 sdl3 = "0.20.0"
 seq-macro = "0.3.6"
+bpaf = { version = "0.9.28", features = ["derive"] }

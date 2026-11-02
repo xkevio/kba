@@ -11,9 +11,9 @@ pub struct Gba {
 }
 
 impl Gba {
-    pub fn with_rom(rom: &[u8]) -> Self {
+    pub fn new(rom: &[u8], bios: &[u8], skip_bios: bool) -> Self {
         Self {
-            cpu: Arm7TDMI::new(rom),
+            cpu: Arm7TDMI::new(rom, bios, skip_bios),
             rom: rom.to_vec(),
             ..Default::default()
         }

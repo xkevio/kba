@@ -150,8 +150,9 @@ impl From<State> for bool {
 
 impl Arm7TDMI {
     /// Initialize SP and PC to the correct values.
-    pub fn new(rom: &[u8]) -> Self {
-        let regs = [0; 16];
+    pub fn new(rom: &[u8], bios: &[u8], skip_bios: bool) -> Self {
+        let mut regs = [0; 16];
+        let mut cpsr = Cpsr(0x1F);
 
         // Resize ROM to 32 MB always for OOB reads.
         let mut rom_arr: Box<[u8; 0x0200_0000]> = box_arr![0; 0x0200_0000];
@@ -163,15 +164,12 @@ impl Arm7TDMI {
                 rom: rom_arr,
                 sram: vec![0; 0x10000],
             },
+            bios: Box::new(bios.try_into().expect("bios rom should be 16 KiB")),
             ..Default::default()
         };
 
-        // Skip BIOS.
-        // regs[13] = 0x0300_7F00;
-        // regs[15] = 0x0800_0000;
-
         // Set other modes r13 (SP) and SPSR.
-        let banked_regs = Registers {
+        let mut banked_regs = Registers {
             sys_regs: bank!(spsr: Cpsr(0), sp: 0),
             und_regs: bank!(spsr: Cpsr(0), sp: 0),
             abt_regs: bank!(spsr: Cpsr(0), sp: 0),
@@ -180,9 +178,23 @@ impl Arm7TDMI {
             fiq_regs: bank!(spsr: Cpsr(0), sp: 0),
         };
 
+        // Skip BIOS boot sequence if requested by setting the appropriate register values.
+        // Only skips the start sequence, games might still request BIOS functions later.
+        if skip_bios {
+            banked_regs.irq_regs.bank[5] = 0x0300_7FA0;
+            banked_regs.svc_regs.bank[5] = 0x0300_7FE0;
+
+            cpsr.set_mode(Mode::System);
+            cpsr.set_irq(false);
+
+            regs[13] = 0x0300_7F00;
+            regs[14] = 0x0800_0000;
+            regs[15] = 0x0800_0000;
+        }
+
         Self {
             regs,
-            cpsr: Cpsr(0x1F),
+            cpsr,
             bus,
             spsr: Cpsr(0),
             banked_regs,

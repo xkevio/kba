@@ -1,3 +1,8 @@
+use crate::{
+    gba::{Gba, LCD_HEIGHT, LCD_WIDTH},
+    ppu,
+};
+use anyhow::{Result, anyhow};
 use paste::paste;
 use sdl3::{
     EventPump,
@@ -6,12 +11,6 @@ use sdl3::{
     pixels::PixelFormat,
     render::{Canvas, ScaleMode, Texture, TextureCreator},
     video::{Window, WindowContext},
-};
-
-use crate::{
-    SdlResult,
-    gba::{Gba, LCD_HEIGHT, LCD_WIDTH},
-    ppu,
 };
 
 macro_rules! process_scancodes {
@@ -33,7 +32,7 @@ pub struct SDLApplication {
 }
 
 impl SDLApplication {
-    pub fn new(title: &str) -> SdlResult<Self> {
+    pub fn new(title: &str) -> Result<Self> {
         let sdl_context = sdl3::init()?;
         let video_subsystem = sdl_context.video()?;
 
@@ -54,7 +53,7 @@ impl SDLApplication {
         })
     }
 
-    pub fn run(&mut self, kba: &mut Gba) -> SdlResult<()> {
+    pub fn run(&mut self, kba: &mut Gba) -> Result<()> {
         let mut texture = self
             .texture_creator
             .create_texture_streaming(PixelFormat::RGBA32, LCD_WIDTH as u32, LCD_HEIGHT as u32)
@@ -112,19 +111,21 @@ impl SDLApplication {
         texture: &mut Texture,
         buffer: &[Option<u16>],
         backdrop: u16,
-    ) -> SdlResult<()> {
-        texture.with_lock(None, |buf: &mut [u8], _: usize| {
-            for (i, px) in buffer[0..(LCD_WIDTH * LCD_HEIGHT)].iter().enumerate() {
-                let [r, g, b, a] = match px {
-                    Some(color) => ppu::rgb555_to_color(*color).to_be_bytes(),
-                    None => ppu::rgb555_to_color(backdrop).to_be_bytes(),
-                };
+    ) -> Result<()> {
+        texture
+            .with_lock(None, |buf: &mut [u8], _: usize| {
+                for (i, px) in buffer[0..(LCD_WIDTH * LCD_HEIGHT)].iter().enumerate() {
+                    let [r, g, b, a] = match px {
+                        Some(color) => ppu::rgb555_to_color(*color).to_be_bytes(),
+                        None => ppu::rgb555_to_color(backdrop).to_be_bytes(),
+                    };
 
-                buf[i * 4] = r;
-                buf[i * 4 + 1] = g;
-                buf[i * 4 + 2] = b;
-                buf[i * 4 + 3] = a;
-            }
-        })
+                    buf[i * 4] = r;
+                    buf[i * 4 + 1] = g;
+                    buf[i * 4 + 2] = b;
+                    buf[i * 4 + 3] = a;
+                }
+            })
+            .map_err(|e| anyhow!(e))
     }
 }

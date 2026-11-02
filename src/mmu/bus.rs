@@ -12,7 +12,7 @@ use crate::{box_arr, ppu::lcd::Ppu};
 
 pub struct Bus {
     /// BIOS - System ROM (needs to be provided).
-    pub bios: &'static [u8],
+    pub bios: Box<[u8; 0x4000]>,
 
     /// Picture Processing Unit, owns LCD IO registers.
     pub ppu: Ppu,
@@ -48,7 +48,7 @@ pub struct Bus {
 impl Default for Bus {
     fn default() -> Self {
         Self {
-            bios: include_bytes!("gba_bios.bin"),
+            bios: box_arr![0x00; 0x4000],
 
             ppu: Ppu::default(),
             key_input: KEYINPUT(0x03FF),
